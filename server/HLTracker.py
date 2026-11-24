@@ -27,6 +27,8 @@ class HLTrackerClient(DatagramProtocol):
         of the specified HLTracker daemon.
         """
         errorMsg = failure.getErrorMessage()
+        # Release the UDP socket, otherwise it leaks one per refresh.
+        self.transport.loseConnection()
         self.server.logEvent(LOG_TYPE_TRACKER, "Failed to update tracker {}:"
                              " {}".format(self.hostname, errorMsg))
 
