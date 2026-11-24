@@ -1,6 +1,14 @@
 from struct import *
 from config import *
 import random
+
+# Defaults for options missing from older config.py files.
+try:
+    IRC_GUEST_LOGIN_DELAY
+except NameError:
+    IRC_GUEST_LOGIN_DELAY = 5
+
+NICKSERV_PREFIX = ":NickServ!NickServ@services"
 import re
 
 def buildTrackerClientPacket(name, description, port, users):
@@ -79,6 +87,8 @@ class HLPacket:
 		self.isIRC = isIRC
 		self.server = None
 		self.irctrap = ""
+		self.irccap = None
+		self.ircreply = ""
 		self.connID = 0
 	
 	def __str__( self ):
@@ -86,6 +96,38 @@ class HLPacket:
 		for obj in self.objs:
 			s += "\n  " + str( obj )
 		return s
+	
+	def _ircNick( self ):
+		""" Returns the IRC nick of the connection this packet came from. """
+		try:
+			user = self.server.getUser( self.connID )
+			if user and user.nick:
+				return user.nick
+		except AttributeError:
+			pass
+		return "*"
+	
+	def _ircLogin( self , login , password ):
+		""" Turns this IRC line into a Hotline login packet. """
+		self.type = HTLC_HDR_LOGIN
+		self.addString( DATA_LOGIN , HLEncode( login ) )
+		self.addString( DATA_PASSWORD , HLEncode( password ) )
+	
+	def _parseNickServ( self , text ):
+		""" Handles a message to NickServ. Supports the usual services syntax:
+		IDENTIFY <password> (account = current nick) and
+		IDENTIFY <account> <password>. """
+		if text.startswith( ":" ):
+			text = text[1:]
+		words = text.strip().split( None , 2 )
+		if words and words[0].upper() in ( "IDENTIFY" , "LOGIN" ) and len( words ) >= 2:
+			if len( words ) == 3:
+				self._ircLogin( words[1] , words[2] )
+			else:
+				self._ircLogin( self._ircNick() , words[1] )
+		else:
+			self.ircreply = ( "%s NOTICE %s :Usage: IDENTIFY <password> or IDENTIFY <account> <password>\r\n"
+				% ( NICKSERV_PREFIX , self._ircNick() ) )
 	
 	def parse( self , data ):
 		""" Tries to parse an entire packet from the data passed in. If successful,
@@ -110,6 +152,35 @@ class HLPacket:
 				self.type = HTLC_HDR_PING
 			
 			elif cmd.startswith("LAGTIME"):
+				return len( line )
+			
+			elif cmd == "USER":
+				# Registration is handled during the IRC handshake.
+				return len( line )
+			
+			elif cmd == "CAP":
+				# Answered by HLConnection; we support no IRCv3 capabilities.
+				parts = line.split( " " , 2 )
+				if len( parts ) > 1:
+					self.irccap = ( parts[1].upper() , parts[2] if len( parts ) > 2 else "" )
+				return len( line )
+			
+			elif cmd == "PASS":
+				# Server password: "account:password", or "password" for the
+				# account matching the nick.
+				if " " in line:
+					arg = line.split( " " , 1 )[1]
+					if arg.startswith( ":" ):
+						arg = arg[1:]
+					if ":" in arg:
+						login , password = arg.split( ":" , 1 )
+						self._ircLogin( login , password )
+					else:
+						self._ircLogin( self._ircNick() , arg )
+				return len( line )
+			
+			elif cmd in ( "NICKSERV" , "NS" ):
+				self._parseNickServ( line.split( " " , 1 )[1] if " " in line else "" )
 				return len( line )
 			
 			elif cmd == "PONG":
@@ -138,8 +209,11 @@ class HLPacket:
 						print "handle that"
 				# Private Message
 				else:
-					# Authentication "bot"
-					if line.split( " " , 2 )[1] == "loginserv":
+					# Authentication "bots"
+					if line.split( " " , 2 )[1].lower() == "nickserv":
+						parts = line.split( " " , 2 )
+						self._parseNickServ( parts[2] if len( parts ) > 2 else "" )
+					elif line.split( " " , 2 )[1] == "loginserv":
 						self.type = HTLC_HDR_LOGIN
                                                 loginStr = line.split(" ", 3)[2]
                                                 if loginStr.startswith(":"):
