@@ -112,6 +112,10 @@ class HLPacket:
 			elif cmd.startswith("LAGTIME"):
 				return len( line )
 			
+			elif cmd == "PONG":
+				# Keepalive replies from IRC clients; nothing to do.
+				return len( line )
+			
 			elif cmd == "PRIVMSG":
 				# Chat
 				if line.split( " " )[1].startswith("#"):
