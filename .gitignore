@@ -1,0 +1,7 @@
+*.pyc
+.DS_Store
+venv/
+.vscode
+
+# Local configuration overrides (see phxd.yaml.example)
+phxd.yaml

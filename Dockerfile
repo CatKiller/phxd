@@ -1,20 +1,14 @@
-FROM python:2-alpine
-MAINTAINER Cat'Killer <catkiller@catkiller.org>
-
-# The "exec" plugins are all written in bash and won't
-# work with bourne. Install bash to ensure they work.
-RUN apk add --no-cache bash
-
-# gcc and other build tools not in alpine. Add them as virtual packages, build Twisted and delete them.
-# Twisted's setup_requires would fetch the latest incremental (Python 3 only),
-# so install the pinned incremental first, then the rest of the pinned deps.
-COPY requirements.txt /tmp/requirements.txt
-RUN apk add --no-cache --virtual .build-deps gcc musl-dev \
-    && pip install incremental==21.3.0 \
-    && pip install -r /tmp/requirements.txt \
-    && apk del .build-deps
-
+FROM python:3.12.0-slim-bookworm
 WORKDIR /app
+
+# Disable stdout/stderr buffering so ``docker logs`` shows server output
+# in real time. Without this, prints/log-stream messages can sit in the
+# buffer indefinitely and the container looks silent.
+ENV PYTHONUNBUFFERED=1
+
+COPY requirements.txt /app
+
+RUN pip install -r requirements.txt
 
 COPY config.py /app/config.py
 COPY phxd /app/phxd
@@ -23,7 +17,13 @@ COPY shared /app/shared
 COPY support /app/support
 COPY configure_phxd.py /app/configure_phxd.py
 
+# 5500 = control connection (HLServer); 5501 = file transfer port
+# (HLFileServer binds to SERVER_PORT + 1). Both must be published with
+# `-p` at `docker run` time, otherwise downloads fail with
+# "Failed to connect for file transfer: Connection refused".
 EXPOSE 5500/tcp
+EXPOSE 5501/tcp
+EXPOSE 6697/tcp
 
 RUN [ "python", "configure_phxd.py" ]
 CMD [ "python", "phxd" ]
