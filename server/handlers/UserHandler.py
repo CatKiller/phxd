@@ -41,7 +41,7 @@ class UserHandler( HLPacketHandler ):
 		if user.account == None:
 			raise HLException , ( "Login is incorrect." , True )
 		if user.account.password != md5( password ).hexdigest():
-			user.nick = packet.getString( DATA_NICK , "unnamed" )
+			user.nick = packet.getString( DATA_NICK , user.nick or "unnamed" )
 			server.logEvent( LOG_TYPE_LOGIN , "Login failure" , user )
 			raise HLException , ( "Password is incorrect." , True )
 		if user.account.fileRoot == "":
@@ -71,8 +71,8 @@ class UserHandler( HLPacketHandler ):
 					nicks += " "+ircCheckUserNick( myuser )
 			data = ":"+IRC_SERVER_NAME+" 353 "+user.nick+" = #public :"+ircCheckUserNick( user )+nicks+"\r\n"
 			data += ":"+IRC_SERVER_NAME+" 366 "+user.nick+" #public :End of /NAMES list.\r\n"
-			data += "NOTICE AUTH:*** You have been successfull logged in !\r\n"
-			data += "NOTICE *:*** You have been forced to join #public\r\n"
+			data += "%s NOTICE %s :You are now identified for %s.\r\n" % ( NICKSERV_PREFIX , user.nick , login )
+			data += "NOTICE * :*** You have been forced to join #public\r\n"
 			c.transport.write( data )
 		
 		# show welcome msg, needs script support in exec/login !!!
