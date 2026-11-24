@@ -6,7 +6,13 @@ MAINTAINER Cat'Killer <catkiller@catkiller.org>
 RUN apk add --no-cache bash
 
 # gcc and other build tools not in alpine. Add them as virtual packages, build Twisted and delete them.
-RUN apk add --no-cache --virtual .build-deps gcc musl-dev && pip install twisted && apk del .build-deps
+# Twisted's setup_requires would fetch the latest incremental (Python 3 only),
+# so install the pinned incremental first, then the rest of the pinned deps.
+COPY requirements.txt /tmp/requirements.txt
+RUN apk add --no-cache --virtual .build-deps gcc musl-dev \
+    && pip install incremental==21.3.0 \
+    && pip install -r /tmp/requirements.txt \
+    && apk del .build-deps
 
 WORKDIR /app
 
