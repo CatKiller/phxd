@@ -11,6 +11,7 @@ from server.HLWebServices import *
 from server.HLDatabaseLogger import *
 from server.HLServerLinkage import *
 from server.HLTracker import HLTrackerClient
+from server.HLTLS import GracefulCloseMixin
 import os
 import sys
 import socket
@@ -60,7 +61,7 @@ def enableDeadPeerDetection( sock , idle = None , interval = None , count = None
         applied["TCP_USER_TIMEOUT"] = int( userTimeout * 1000 )
     return applied
 
-class HLConnection( Protocol ):
+class HLConnection( GracefulCloseMixin , Protocol ):
     """ Protocol subclass to handle parsing and dispatching of raw hotline data. """
     
     def __init__( self , factory , connID ):
@@ -90,6 +91,7 @@ class HLConnection( Protocol ):
 
     def connectionLost( self , reason ):
         """ Called when the connection is lost. """
+        self.connectionClosed()
         if ( self.idleTimer != None ) and self.idleTimer.active():
             self.idleTimer.cancel()
         if ( self.guestTimer != None ) and self.guestTimer.active():
@@ -117,7 +119,7 @@ class HLConnection( Protocol ):
             # Don't let an exception inside parseBuffer disappear into
             # Twisted — log it explicitly so it shows in docker logs.
             self.factory.log.exception( "Unhandled exception in parseBuffer (connID=%d)" , self.connID )
-            self.transport.loseConnection()
+            self.closeConnection()
     
     def parseBuffer( self ):
         """ Parses the current buffer until the buffer is empty or until no more packets can be parsed. """
@@ -163,7 +165,7 @@ class HLConnection( Protocol ):
                         unexpected = [ n for n in names if n not in ( "CAP" , "PASS" ) ]
                         if unexpected:
                             self.ircWrite( ":"+IRC_SERVER_NAME+" 421 %s :Unknown command\r\n" % unexpected[0] )
-                            self.transport.loseConnection()
+                            self.closeConnection()
                             return
                         # Only capability negotiation / server password so far:
                         # answer CAP LS and wait for the client to register.
@@ -251,7 +253,7 @@ class HLConnection( Protocol ):
         try:
             user = self.factory.getUser( self.connID )
             if not user:
-                self.transport.loseConnection()
+                self.closeConnection()
                 return
             if self.isIRC and self.packet.irccap:
                 self.ircHandleCap( self.packet.irccap[0] , self.packet.irccap[1] , user.nick )
@@ -314,12 +316,12 @@ class HLConnection( Protocol ):
                 self.writePacket( packet )
             if ex.fatal:
                 # The exception was fatal (i.e. failed login) so kill the connection.
-                self.transport.loseConnection()
+                self.closeConnection()
         except Exception:
             # Anything else is a bug — surface it instead of letting Twisted
             # eat it.
             self.factory.log.exception( "Unhandled error in handlePacket (connID=%d)" , self.connID )
-            self.transport.loseConnection()
+            self.closeConnection()
     
     def idleCheck( self ):
         """ Called a set amount of time after the last non-ping packet, mark us as idle and trick the handlers into sending the change. """
@@ -366,26 +368,37 @@ class HLServer( Factory ):
         self._initLog()
         self._ensureFileRoot()
         reactor.listenTCP( self.port , self )
-        if IRC_TLS_PORT:
-            self.listenTLS( IRC_TLS_PORT , IRC_TLS_CERT , IRC_TLS_KEY )
+        self.setupTLS( HOTLINE_TLS_PORT , IRC_TLS_PORT , TLS_CERT , TLS_KEY )
         # Update all trackers periodically
         recurrentTask = task.LoopingCall(self.updateTrackers)
         recurrentTask.start(TRACKER_REFRESH_PERIOD)
         #recurrentTask.addErrback(updateTrackersFailed)
     
-    def listenTLS( self , port , certPath , keyPath ):
-        """ Accepts TLS connections on ``port``, served exactly like the
-        plain ones (protocol detection, IRC and Hotline). Exits with a
-        readable error if the certificate can't be loaded. """
+    def setupTLS( self , hotlinePort , ircPort , certPath , keyPath ):
+        """ Starts the TLS listeners: Hotline over TLS on ``hotlinePort``
+        with TLS file transfers on the port after it, and IRC over TLS on
+        ``ircPort`` (0 disables either). All share one certificate, which
+        is reloaded when its files change. Exits with a readable error if
+        TLS is enabled but the certificate can't be loaded. Returns the
+        context factory, or None when TLS is disabled. """
+        ports = [ p for p in ( hotlinePort , ircPort ) if p ]
+        if not ports:
+            return None
         from server.HLTLS import ReloadingTLSContextFactory , TLSConfigError
         if not certPath or not keyPath:
-            raise SystemExit( "phxd: configuration error: irc_tls_port is set but irc_tls_cert / irc_tls_key are not" )
+            raise SystemExit( "phxd: configuration error: a TLS port is set but tls_cert / tls_key are not" )
         try:
             contextFactory = ReloadingTLSContextFactory( certPath , keyPath , self.log )
         except TLSConfigError as e:
             raise SystemExit( "phxd: configuration error: %s" % e )
-        reactor.listenSSL( port , self , contextFactory )
-        self.log.info( "Listening for TLS connections on port %d" , port )
+        # The listener detects Hotline vs IRC per connection, so one
+        # listener serves both if the two ports are the same.
+        for port in sorted( set( ports ) ):
+            reactor.listenSSL( port , self , contextFactory )
+            self.log.info( "Listening for TLS connections on port %d" , port )
+        if hotlinePort:
+            self.fileserver.listenTLS( hotlinePort + 1 , contextFactory )
+            self.log.info( "Listening for TLS file transfers on port %d" , hotlinePort + 1 )
         return contextFactory
 
     def _ensureFileRoot( self ):
@@ -569,7 +582,7 @@ class HLServer( Factory ):
         """ Actively disconnect the specified user. """
         if uid in self.clients:
             ( conn , user ) = self.clients[uid]
-            conn.transport.loseConnection()
+            conn.closeConnection()
     
     def removeConnection( self , connID ):
         """ Called from HLConnection when a connection dies. """
