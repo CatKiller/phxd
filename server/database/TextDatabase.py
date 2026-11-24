@@ -44,6 +44,19 @@ class TextDatabase (HLDatabase):
 		fp.close()
 		return acct
 	
+	def findLogin( self , login ):
+		""" Returns the stored login matching the specified login case-insensitively,
+		or None if there is no match or the match is ambiguous. """
+		try:
+			fp = file( self.accountsFile , "r" )
+		except IOError:
+			return None
+		matches = [ l.split( "\t" )[0] for l in fp.readlines() if l.split( "\t" )[0].lower() == login.lower() ]
+		fp.close()
+		if len( matches ) == 1:
+			return matches[0]
+		return None
+	
 	def saveAccount( self , acct ):
 		""" Saves the specified HLAccount object to the database. If the HLAccount has a non-zero ID, the information is updated, otherwise a new account is inserted. """
 		try:
