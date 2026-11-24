@@ -99,7 +99,7 @@ class UserHandler( HLPacketHandler ):
 		#	user.status &= ~STATUS_ADMIN
 		
 		# Check to see if they can use any name; if not, set their nickname to their account name.
-		if not user.hasPriv( PRIV_USE_ANY_NAME ):
+		if not user.hasPriv( PRIV_USE_ANY_NAME ) and user.account is not None:
 			user.nick = user.account.name
 		
 		change = HLPacket( HTLS_HDR_USER_CHANGE )
