@@ -1573,3 +1573,15 @@ def test_account_logins_and_names_are_length_limited(fake_server, admin_user):
     packet = HLPacket(HTLC_HDR_ACCOUNT_CREATE, 1)
     packet.addString(DATA_LOGIN, HLEncode("x" * 64))
     AcctHandler().handleAccountCreate(fake_server, admin_user, packet)
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 32: Twisted's own log lines share the cap
+# ---------------------------------------------------------------------------
+
+
+def test_twisted_log_lines_share_the_cap(irc_server):
+    import logging
+
+    twisted_logger = logging.getLogger("twisted")
+    assert irc_server.server.logLimiter in twisted_logger.filters

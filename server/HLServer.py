@@ -662,7 +662,8 @@ class HLServer( Factory ):
         self.log.propagate = False
         for old in [ f for f in self.log.filters if isinstance( f , LogRateLimiter ) ]:
             self.log.removeFilter( old )
-        self.log.addFilter( LogRateLimiter( self.log , LOG_LINES_PER_MINUTE ) )
+        self.logLimiter = LogRateLimiter( self.log , LOG_LINES_PER_MINUTE )
+        self.log.addFilter( self.logLimiter )
 
         fmt = logging.Formatter( '%(asctime)s\t%(levelname)s\t%(message)s' )
 
@@ -718,6 +719,10 @@ class HLServer( Factory ):
             twisted_logger.setLevel( logging.DEBUG )
             twisted_logger.propagate = False
             twisted_logger.addHandler( streamHandler )
+            # Same budget as phxd's own lines (see LogRateLimiter).
+            for old in [ f for f in twisted_logger.filters if isinstance( f , LogRateLimiter ) ]:
+                twisted_logger.removeFilter( old )
+            twisted_logger.addFilter( self.logLimiter )
 
             def _bridge( eventDict ):
                 if eventDict.get( "isError" ):
