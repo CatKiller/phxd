@@ -7,13 +7,37 @@ on:
     branches: [ master ]
 
 
+# The job only builds the image: it needs nothing but read access.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: Docker
       run: |
         docker build . --file Dockerfile
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Tests (including tests/test_security.py)
+      run: |
+        pip install -r requirements-dev.txt
+        pytest
