@@ -50,5 +50,7 @@ Connecting for the first time
 =============================
 
 By default, an "admin" account is created with the password "adminpass".
-Make sure you log in immediately after running phxd and change the password
+Since that password is public, phxd replaces it with a random one when it
+first starts and shows it once in its log (look for "SECURITY: the 'admin'
+account had the default password"). Log in with it and change the password,
 or delete the admin account (after creating a privileged account, of course).
