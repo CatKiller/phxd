@@ -220,8 +220,15 @@ class FileHandler( HLPacketHandler ):
         for xfer in server.fileserver.transfers.values():
             if ( xfer.type == 1 ) and ( os.path.abspath( xfer.path ) == os.path.abspath( path ) ):
                 raise HLException("This file is already being uploaded.")
+        # Resuming appends to the existing partial file: only its own
+        # uploader may do that, or someone else could put their data in
+        # front of (or after) another user's upload.
+        key = os.path.abspath( path )
+        if os.path.lexists( path ) and ( server.fileserver.partialOwners.get( key ) != user.account.login ):
+            raise HLException("An interrupted upload of this file by someone else is waiting to be resumed. Please use another name.")
         
         xfer = server.fileserver.addUpload( user.uid , path )
+        server.fileserver.partialOwners[key] = user.account.login
         if size > 0:
             xfer.total = size
         reply = HLPacket( HTLS_HDR_TASK , packet.seq )

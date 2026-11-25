@@ -130,6 +130,9 @@ class HLFileServer (Factory):
         self.timeouts = {}
         # Open transfer connections, per peer address.
         self.connections = {}
+        # Partial upload file (absolute path) -> login of its uploader,
+        # who alone may resume it.
+        self.partialOwners = {}
         reactor.listenTCP( self.port , self )
 
     def listenTLS( self , port , contextFactory ):
@@ -242,6 +245,15 @@ class HLFileServer (Factory):
                 elif info.type == XFER_TYPE_UPLOAD:
                     self.server.database.updateAccountStats( user.account.login , 0 , info.transferred )
             del self.transfers[info.id]
+            self._forgetFinishedPartial( info )
+
+    def _forgetFinishedPartial( self , info ):
+        """ Drops the owner of a partial upload once it no longer exists
+        (the upload completed and was renamed). """
+        if info.type == XFER_TYPE_UPLOAD:
+            partial = os.path.abspath( info.hpfPath )
+            if not os.path.lexists( partial ):
+                self.partialOwners.pop( partial , None )
     
     def cleanupTransfers( self , owner ):
         """ Removes any transfers owned by owner. Should be called when the user disconnects or is disconnected. """

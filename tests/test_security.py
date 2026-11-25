@@ -1585,3 +1585,35 @@ def test_twisted_log_lines_share_the_cap(irc_server):
 
     twisted_logger = logging.getLogger("twisted")
     assert irc_server.server.logLimiter in twisted_logger.filters
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 33: resuming someone else's upload
+# ---------------------------------------------------------------------------
+
+
+def test_only_the_uploader_can_resume_a_partial_upload(irc_server, tmp_path):
+    from shared.HLProtocol import DATA_RESUME, HTLC_HDR_FILE_PUT, PRIV_UPLOAD_ANYWHERE, PRIV_UPLOAD_FILES
+
+    root = tmp_path / "files"
+    root.mkdir(exist_ok=True)
+    for acct in irc_server.database.accounts:
+        acct.fileRoot = str(root)
+        acct.privs |= PRIV_UPLOAD_FILES | PRIV_UPLOAD_ANYWHERE
+    attacker = irc_server.hotline_client()
+    attacker.login("guest", "", "attacker")
+    attacker.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "tool.zip")])
+    # The attacker's upload is interrupted, leaving tool.zip.hpf.
+    for xfer in list(irc_server.server.fileserver.transfers.values()):
+        irc_server.server.fileserver.removeTransfer(xfer.id)
+        xfer.finish()
+    (root / "tool.zip.hpf").write_bytes(b"MALICIOUS PREFIX")
+    victim = irc_server.hotline_client()
+    victim.login("tester", "s3cret", "victim")
+    errors(victim)
+    victim.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "tool.zip")])
+    assert errors(victim) == ["An interrupted upload of this file by someone else is waiting to be resumed. Please use another name."]
+    # The original uploader can still resume it.
+    errors(attacker)
+    attacker.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "tool.zip")])
+    assert errors(attacker) == []

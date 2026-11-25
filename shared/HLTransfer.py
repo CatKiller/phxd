@@ -110,6 +110,7 @@ class HLUpload( HLTransfer ):
         # Append-mode binary so writes don't try to text-encode incoming
         # bytes from the upload connection.
         self.renamed = False
+        self.hpfPath = path
         self.file = open( path , "ab" )
         self.initialSize = os.path.getsize( path )
         self.buffer = b""
