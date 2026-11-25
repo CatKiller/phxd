@@ -74,6 +74,11 @@ MAX_LOGIN_FAILURES = 5
 # server-side scripts or /find searches per user per 10 seconds: each
 # costs real work on the server's single thread (0 = unlimited).
 MAX_LOGINS_PER_MINUTE = 20
+# Addresses that stand for many clients at once (a proxy, or Docker's
+# gateway when it forwards IPv6 connections to an IPv4-only container):
+# per-address limits and bans are not applied to them, since they would
+# hit every client behind them. "auto" adds this host's default gateway.
+SHARED_ADDRESSES = ["auto"]
 MAX_COMMANDS_PER_10S = 5
 LOGIN_FAILURE_WINDOW = 5 * 60
 MAX_PACKET_SIZE = 1024 * 1024

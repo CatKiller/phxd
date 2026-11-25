@@ -76,6 +76,36 @@ except NameError:
 # Output (bytes) the server keeps for a client that isn't reading it
 # before disconnecting it: unread output is held in memory.
 MAX_PENDING_OUTPUT = 2 * 1024 * 1024
+try:
+    SHARED_ADDRESSES
+except NameError:
+    SHARED_ADDRESSES = [ "auto" ]
+
+def defaultGateway( routes = "/proc/net/route" ):
+    """ This host's IPv4 default gateway (Linux), or None. """
+    import socket , struct
+    try:
+        with open( routes ) as fp:
+            for line in fp.readlines()[1:]:
+                fields = line.split()
+                if len( fields ) > 2 and fields[1] == "00000000":
+                    return socket.inet_ntoa( struct.pack( "<L" , int( fields[2] , 16 ) ) )
+    except ( OSError , ValueError ):
+        pass
+    return None
+
+def sharedAddresses():
+    """ The set of SHARED_ADDRESSES, with "auto" resolved. """
+    result = set()
+    for addr in SHARED_ADDRESSES:
+        if addr == "auto":
+            gateway = defaultGateway()
+            if gateway:
+                result.add( gateway )
+        elif addr:
+            result.add( addr )
+    return result
+
 # Packets (or IRC lines) a connection may send before logging in.
 MAX_PRELOGIN_PACKETS = 50
 try:

@@ -85,7 +85,7 @@ class UserHandler( HLPacketHandler ):
 
         if reason != None:
             raise HLException( "You are banned: %s" % reason , True)
-        if not server.allowRate( "login" , user.ip , MAX_LOGINS_PER_MINUTE , 60 ):
+        if ( not server.isShared( user.ip ) ) and not server.allowRate( "login" , user.ip , MAX_LOGINS_PER_MINUTE , 60 ):
             raise HLException( "Too many logins from your address, please try again in a minute." , True)
 
         user.account = server.database.loadAccount( login )

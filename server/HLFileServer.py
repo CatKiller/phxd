@@ -140,6 +140,8 @@ class HLFileServer (Factory):
         """ Counts a new transfer connection from ``host``; returns False
         if that is more than MAX_CONNECTIONS_PER_IP. """
         self.connections[host] = self.connections.get( host , 0 ) + 1
+        if self.server.isShared( host ):
+            return True
         return ( MAX_CONNECTIONS_PER_IP <= 0 ) or ( self.connections[host] <= MAX_CONNECTIONS_PER_IP )
 
     def removeConnection( self , host ):

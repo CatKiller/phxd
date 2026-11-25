@@ -1259,3 +1259,48 @@ def test_reading_client_is_resumed(irc_server):
     client.conn.resumeProducing()
     client.conn.send(b"y" * (3 * 1024 * 1024))
     assert not client.closed
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 18: addresses that stand for many clients
+# ---------------------------------------------------------------------------
+
+
+def test_default_gateway_is_read_from_the_routing_table(tmp_path):
+    from shared.HLProtocol import defaultGateway
+
+    routes = tmp_path / "route"
+    routes.write_text(
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\n"
+        "eth0\t00000000\t010011AC\t0003\t0\t0\t0\t00000000\n"
+        "eth0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\n"
+    )
+    assert defaultGateway(str(routes)) == "172.17.0.1"
+    assert defaultGateway(str(tmp_path / "missing")) is None
+
+
+class TestSharedAddresses:
+    @pytest.fixture
+    def gateway(self, irc_server):
+        irc_server.server.shared = {"172.17.0.1"}
+        return "172.17.0.1"
+
+    def test_failed_logins_do_not_ban_everyone_behind_it(self, irc_server, gateway):
+        for _ in range(6):
+            client = irc_server.hotline_client(host=gateway)
+            client.login("tester", "wrong")
+        client = irc_server.hotline_client(host=gateway)
+        client.login("tester", "s3cret")
+        assert client.user.isLoggedIn()
+
+    def test_connection_limit_does_not_lock_everyone_out(self, irc_server, gateway):
+        clients = [irc_server.irc_client(host=gateway) for _ in range(15)]
+        assert not any(c.closed for c in clients)
+
+    def test_kick_ban_is_not_applied(self, irc_server, gateway):
+        irc_server.server.addTempBan(gateway, "kicked")
+        assert irc_server.server.checkForBan(gateway) is None
+
+    def test_ordinary_addresses_are_still_limited(self, irc_server, gateway):
+        clients = [irc_server.irc_client(host="10.5.5.5") for _ in range(11)]
+        assert clients[-1].closed

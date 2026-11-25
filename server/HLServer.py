@@ -476,6 +476,9 @@ class HLServer( Factory ):
         self.loginFailures = {}
         # Recent event times for rate limits, per ( kind , key ).
         self.rateEvents = {}
+        # Addresses standing for many clients: no per-address limits/bans.
+        self.shared = sharedAddresses()
+        self.warnedShared = False
         self.database = getDatabase( DB_TYPE )
         self.fileserver = HLFileServer( self )
         self.webserver = HLWebServices( self )
@@ -702,8 +705,23 @@ class HLServer( Factory ):
                self.linker.forwardUserConnect( user )
 
     
+    def isShared( self , addr ):
+        """ True if addr stands for many clients (see SHARED_ADDRESSES):
+        limiting or banning it would hit all of them. Warns once. """
+        if addr not in self.shared:
+            return False
+        if not self.warnedShared:
+            self.warnedShared = True
+            self.log.warning( "Clients are connecting from %s, which stands for many clients (e.g. Docker "
+                              "forwarding IPv6 connections): per-address limits and bans are not applied to it. "
+                              "See SHARED_ADDRESSES in README.md to give phxd the real addresses." , addr )
+        return True
+
     def addTempBan( self , addr , reason = "no reason" ):
         """ Adds a temporary ban for addr that will expire in BAN_TIME seconds. """
+        if self.isShared( addr ):
+            self.log.warning( "Not banning %s: it stands for many clients" , addr )
+            return
         if addr not in self.tempBans:
             self.tempBans[addr] = reason
             reactor.callLater( BAN_TIME , self.removeTempBan , addr )
@@ -716,7 +734,7 @@ class HLServer( Factory ):
     def recordLoginFailure( self , addr ):
         """ Counts a failed login from addr, and bans addr for BAN_TIME once
         it has failed MAX_LOGIN_FAILURES times in LOGIN_FAILURE_WINDOW. """
-        if MAX_LOGIN_FAILURES <= 0:
+        if ( MAX_LOGIN_FAILURES <= 0 ) or self.isShared( addr ):
             return
         now = time.time()
         recent = [ t for t in self.loginFailures.get( addr , [] ) if now - t < LOGIN_FAILURE_WINDOW ]
@@ -752,7 +770,7 @@ class HLServer( Factory ):
 
     def tooManyConnections( self , addr ):
         """ True if addr has more than MAX_CONNECTIONS_PER_IP connections. """
-        if MAX_CONNECTIONS_PER_IP <= 0:
+        if ( MAX_CONNECTIONS_PER_IP <= 0 ) or self.isShared( addr ):
             return False
         count = len( [ u for ( c , u ) in self.clients.values() if u.local and u.ip == addr ] )
         return count > MAX_CONNECTIONS_PER_IP
