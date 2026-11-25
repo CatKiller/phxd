@@ -1334,3 +1334,36 @@ def test_private_chat_creation_is_rate_limited(irc_server):
         client.send_packet(HTLC_HDR_CHAT_CREATE, [])
     assert len(irc_server.server.chats) == 10
     assert errors(client) == ["Please wait a minute before creating more private chats."]
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 20 (fuzzing): IRC chat and malformed input
+# ---------------------------------------------------------------------------
+
+
+def test_irc_user_chatting_in_public_stays_connected(irc_server):
+    from tests.test_irc import logged_in_irc_client
+
+    hl = irc_server.hotline_client()
+    hl.login("guest", "", "hl")
+    alice = logged_in_irc_client(irc_server, "alice")
+    alice.send("PRIVMSG #public :hello everyone")
+    assert not alice.closed
+    assert b"hello everyone" in hl.transport.data
+
+
+@pytest.mark.parametrize("line", ["NICK", "PRIVMSG", "INVITE x y", "KICK", "PRIVMSG #x :hi", "WHOIS"])
+def test_malformed_irc_lines_are_ignored(irc_server, line):
+    from tests.test_irc import logged_in_irc_client
+
+    alice = logged_in_irc_client(irc_server, "alice")
+    alice.send(line)
+    assert not alice.closed
+
+
+def test_malformed_hotline_packet_closes_quietly(irc_server):
+    client = irc_server.hotline_client()
+    # Claims 5 objects but carries none.
+    body = struct.pack("!H", 5)
+    client.conn.dataReceived(struct.pack("!5L", HTLC_HDR_CHAT, 1, 0, len(body), len(body)) + body)
+    assert client.closed

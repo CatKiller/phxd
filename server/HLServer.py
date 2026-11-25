@@ -15,6 +15,7 @@ from server.HLTLS import GracefulCloseMixin
 import os
 import sys
 import socket
+from struct import error as StructError
 #from twisted.logger import globalLogBeginner, textFileLogObserver
 #globalLogBeginner.beginLoggingTo([textFileLogObserver(sys.stdout)])
 
@@ -138,6 +139,11 @@ class HLConnection( GracefulCloseMixin , Protocol ):
         self.buffer += data
         try:
             self.parseBuffer()
+        except StructError:
+            # struct.error: a malformed Hotline packet. Not worth a
+            # traceback in the log (anyone can send these).
+            self.factory.log.info( "Malformed packet from connID=%d, closing" , self.connID )
+            self.closeConnection()
         except Exception:
             # Don't let an exception inside parseBuffer disappear into
             # Twisted — log it explicitly so it shows in docker logs.
@@ -177,7 +183,13 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                     self.packet.isIRC = self.isIRC
                     self.packet.connID = self.connID
                     self.packet.server = self.factory
-                    self.packet.parse( line )
+                    try:
+                        self.packet.parse( line )
+                    except ( IndexError , ValueError ):
+                        # Malformed line (e.g. "NICK" with no nick):
+                        # ignore it rather than drop the connection.
+                        self.packet = HLPacket()
+                        continue
                     self.handlePacket()
                     self.packet = HLPacket()
                     continue
@@ -283,6 +295,10 @@ class HLConnection( GracefulCloseMixin , Protocol ):
         """ Writes ``data`` to the client, unless it has stopped reading:
         then it is disconnected once MAX_PENDING_OUTPUT bytes are waiting. """
         if self.closing:
+            return
+        if isinstance( data , str ):
+            data = data.encode( 'mac-roman' , errors = 'replace' )
+        if not data:
             return
         if self.outputPaused:
             self.pausedBytes += len( data )

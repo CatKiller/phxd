@@ -676,7 +676,8 @@ class HLPacket:
                     ( c , u ) = self.server.clients[self.getNumber( DATA_UID )]
                     # this should be hanlded already elsewhere but forgot :(
                     if user.uid == u.uid:
-                        return data
+                        # IRC clients show their own messages themselves.
+                        return b""
                     # Public chat shows the plain nick, without the uid prefix.
                     mynick = ircSafeNick( u.nick )
                 except KeyError:
