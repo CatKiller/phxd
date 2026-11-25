@@ -8,6 +8,10 @@ FIND_MAX_MATCHES = 100
 
 def handle( server , user , arg , ref ):
     if len( arg ) > 0:
+        if not server.allowRate( "command" , user.uid , MAX_COMMANDS_PER_10S , 10 ):
+            from server.handlers.ChatHandler import tooFast
+            tooFast( server , user , ref )
+            return
         pre = len( user.account.fileRoot )
         matches = []
         # The walk runs on the server's only thread: bound it so a search

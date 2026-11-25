@@ -426,6 +426,8 @@ class HLServer( Factory ):
         self.tempBans = {}
         # Recent failed login times, per IP address.
         self.loginFailures = {}
+        # Recent event times for rate limits, per ( kind , key ).
+        self.rateEvents = {}
         self.database = getDatabase( DB_TYPE )
         self.fileserver = HLFileServer( self )
         self.webserver = HLWebServices( self )
@@ -679,6 +681,26 @@ class HLServer( Factory ):
             self.log.warning( "Banning %s for %d seconds after %d failed logins" , addr , BAN_TIME , len( recent ) )
             self.addTempBan( addr , "Too many failed logins." )
             self.loginFailures.pop( addr , None )
+
+    def allowRate( self , kind , key , limit , window ):
+        """ Records an event of ``kind`` for ``key`` (an address, a user)
+        and returns False if there were already ``limit`` of them in the
+        last ``window`` seconds (the event is then not counted). A limit
+        of 0 or less means unlimited. """
+        if limit <= 0:
+            return True
+        now = time.time()
+        recent = [ t for t in self.rateEvents.get( ( kind , key ) , [] ) if now - t < window ]
+        if len( recent ) >= limit:
+            self.rateEvents[( kind , key )] = recent
+            return False
+        recent.append( now )
+        self.rateEvents[( kind , key )] = recent
+        if len( self.rateEvents ) > 10000:
+            # Forget keys whose events have all expired.
+            for k in [ k for k , times in self.rateEvents.items() if now - times[-1] >= 600 ]:
+                del self.rateEvents[k]
+        return True
 
     def tooManyConnections( self , addr ):
         """ True if addr has more than MAX_CONNECTIONS_PER_IP connections. """

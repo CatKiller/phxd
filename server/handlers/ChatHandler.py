@@ -11,6 +11,14 @@ COMMAND_NAME = re.compile( r'^[A-Za-z0-9_]+$' )
 def installHandler( server ):
     server.registerPacketHandler( ChatHandler() )
 
+def tooFast( server , user , ref ):
+    """ Tells ``user`` they are running commands too quickly. """
+    chat = HLPacket( HTLS_HDR_CHAT )
+    chat.addString( DATA_STRING , "\r > Too many commands, please wait a few seconds." )
+    if ref > 0:
+        chat.addInt32( DATA_CHATID , ref )
+    server.sendPacket( user.uid , chat )
+
 def dispatchCommand( server , user , line , ref ):
     """ Dispatch a line of chat to the appropriate chat command handler. """
     if ( line[0] == '/' ) or ( line[0] == '\\' ) or ( user.isIRC and line[0] == '!' ):
@@ -31,6 +39,11 @@ def dispatchCommand( server , user , line , ref ):
             return True
         # Otherwise, a server-side script from support/exec, if there is
         # one with that name.
+        if findScript( cmd ) is None:
+            return False
+        if not server.allowRate( "command" , user.uid , MAX_COMMANDS_PER_10S , 10 ):
+            tooFast( server , user , ref )
+            return True
         ret = shell_exec( user , cmd , args )
         if ret == None:
             return False

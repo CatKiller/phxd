@@ -1150,3 +1150,41 @@ def test_normal_irc_registration_is_well_under_the_limit(irc_server):
     client.send("PRIVMSG loginserv guest")
     assert client.user.isLoggedIn()
     assert not client.closed
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 15: rate limits on expensive actions
+# ---------------------------------------------------------------------------
+
+
+def test_scripts_are_rate_limited(irc_server, exec_dir):
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    calls = []
+    import shared.HLUtils as utils
+
+    real = utils.shell_exec
+    import server.handlers.ChatHandler as chat
+
+    chat.shell_exec = lambda *args: calls.append(args) or "out"
+    try:
+        client.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "\r".join(["/echoargs"] * 20))])
+    finally:
+        chat.shell_exec = real
+    assert len(calls) == 5
+    assert b"Too many commands" in client.transport.data
+
+
+def test_logins_per_address_are_rate_limited(irc_server):
+    for _ in range(20):
+        client = irc_server.hotline_client(host="10.8.8.8")
+        client.login("guest", "", "alice")
+        assert client.user.isLoggedIn()
+        client.conn.closeConnection()
+    client = irc_server.hotline_client(host="10.8.8.8")
+    client.login("guest", "", "alice")
+    assert errors(client) == ["Too many logins from your address, please try again in a minute."]
+    # Other addresses are unaffected, and the limit passes.
+    other = irc_server.hotline_client(host="10.8.8.9")
+    other.login("guest", "", "bob")
+    assert other.user.isLoggedIn()

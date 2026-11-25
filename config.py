@@ -70,6 +70,11 @@ BAN_TIME = 15 * 60
 LOGIN_TIMEOUT = 60
 MAX_CONNECTIONS_PER_IP = 10
 MAX_LOGIN_FAILURES = 5
+# Login attempts (successful or not) accepted per address per minute, and
+# server-side scripts or /find searches per user per 10 seconds: each
+# costs real work on the server's single thread (0 = unlimited).
+MAX_LOGINS_PER_MINUTE = 20
+MAX_COMMANDS_PER_10S = 5
 LOGIN_FAILURE_WINDOW = 5 * 60
 MAX_PACKET_SIZE = 1024 * 1024
 MAX_IRC_LINE = 8192

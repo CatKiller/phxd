@@ -60,6 +60,14 @@ try:
     MIN_FREE_SPACE_MB
 except NameError:
     MIN_FREE_SPACE_MB = 1024
+try:
+    MAX_LOGINS_PER_MINUTE
+except NameError:
+    MAX_LOGINS_PER_MINUTE = 20
+try:
+    MAX_COMMANDS_PER_10S
+except NameError:
+    MAX_COMMANDS_PER_10S = 5
 # Packets (or IRC lines) a connection may send before logging in.
 MAX_PRELOGIN_PACKETS = 50
 try:
