@@ -1603,11 +1603,12 @@ def test_only_the_uploader_can_resume_a_partial_upload(irc_server, tmp_path):
     attacker = irc_server.hotline_client()
     attacker.login("guest", "", "attacker")
     attacker.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "tool.zip")])
-    # The attacker's upload is interrupted, leaving tool.zip.hpf.
-    for xfer in list(irc_server.server.fileserver.transfers.values()):
-        irc_server.server.fileserver.removeTransfer(xfer.id)
-        xfer.finish()
+    # The attacker sends a few bytes, then the upload is interrupted,
+    # leaving tool.zip.hpf.
     (root / "tool.zip.hpf").write_bytes(b"MALICIOUS PREFIX")
+    for xfer in list(irc_server.server.fileserver.transfers.values()):
+        xfer.finish()
+        irc_server.server.fileserver.removeTransfer(xfer.id)
     victim = irc_server.hotline_client()
     victim.login("tester", "s3cret", "victim")
     errors(victim)
@@ -1701,3 +1702,43 @@ def test_long_fields_are_cut_not_fatal(irc_server):
     chat.addUser(member.user)
     member.send_packet(HTLC_HDR_CHAT_SUBJECT, [(DATA_CHATID, struct.pack("!L", chat.id)), (DATA_SUBJECT, b"s" * 100000)])
     assert not member.closed
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 48: abandoned upload requests
+# ---------------------------------------------------------------------------
+
+
+def test_abandoned_upload_requests_leave_nothing_behind(irc_server, tmp_path):
+    from shared.HLProtocol import HTLC_HDR_FILE_PUT, PRIV_UPLOAD_ANYWHERE, PRIV_UPLOAD_FILES
+
+    root = tmp_path / "files"
+    root.mkdir(exist_ok=True)
+    for acct in irc_server.database.accounts:
+        acct.fileRoot = str(root)
+        acct.privs |= PRIV_UPLOAD_FILES | PRIV_UPLOAD_ANYWHERE
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    for i in range(10):
+        client.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "junk%d" % i)])
+    assert len(list(root.glob("*.hpf"))) == 10
+    irc_server.clock.advance(31)  # transfers never started
+    assert list(root.glob("*.hpf")) == []
+    assert irc_server.server.fileserver.partialOwners == {}
+
+
+def test_interrupted_upload_with_data_is_kept_for_resuming(irc_server, tmp_path):
+    from shared.HLProtocol import HTLC_HDR_FILE_PUT, PRIV_UPLOAD_ANYWHERE, PRIV_UPLOAD_FILES
+
+    root = tmp_path / "files"
+    root.mkdir(exist_ok=True)
+    for acct in irc_server.database.accounts:
+        acct.fileRoot = str(root)
+        acct.privs |= PRIV_UPLOAD_FILES | PRIV_UPLOAD_ANYWHERE
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    client.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "big.bin")])
+    (root / "big.bin.hpf").write_bytes(b"partial data")
+    irc_server.clock.advance(31)
+    assert (root / "big.bin.hpf").exists()
+    assert irc_server.server.fileserver.partialOwners

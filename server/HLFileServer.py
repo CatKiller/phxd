@@ -227,7 +227,9 @@ class HLFileServer (Factory):
         self.timeouts.pop( id , None )
         if id in self.transfers:
             # Close its file: transfers open it when they are requested.
-            self.transfers.pop( id ).finish()
+            info = self.transfers.pop( id )
+            info.finish()
+            self._forgetFinishedPartial( info )
     
     def removeTransfer( self , xfid ):
         """ Removes a transfer from the list of transfers. """
@@ -248,10 +250,19 @@ class HLFileServer (Factory):
             self._forgetFinishedPartial( info )
 
     def _forgetFinishedPartial( self , info ):
-        """ Drops the owner of a partial upload once it no longer exists
-        (the upload completed and was renamed). """
+        """ Once an upload is over: removes its partial file if nothing was
+        written to it (the request creates it; otherwise every abandoned
+        request would leave an empty file behind), and forgets the owner
+        of a partial file that no longer exists (the upload completed and
+        was renamed, or it was empty). Partial files with data are kept
+        so their uploader can resume them. """
         if info.type == XFER_TYPE_UPLOAD:
             partial = os.path.abspath( info.hpfPath )
+            try:
+                if os.path.isfile( partial ) and not os.path.islink( partial ) and os.path.getsize( partial ) == 0:
+                    os.unlink( partial )
+            except OSError:
+                pass
             if not os.path.lexists( partial ):
                 self.partialOwners.pop( partial , None )
     
