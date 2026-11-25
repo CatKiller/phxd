@@ -92,6 +92,8 @@ class ChatHandler( HLPacketHandler ):
         opt = packet.getNumber( DATA_OPTION , 0 )
         ref = packet.getNumber( DATA_CHATID , 0 )
         pchat = server.getChat( ref )
+        if ( pchat != None ) and not pchat.hasUser( user ):
+            raise HLException( "You are not in this chat." )
         
         if user.hasPriv( PRIV_SEND_CHAT ) and ( len( str ) > 0 ):
             str = str.replace( "\n" , "\r" )

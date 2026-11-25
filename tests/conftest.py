@@ -121,6 +121,9 @@ class FakeServer:
         # For unit tests we just want the call to be a no-op.
         pass
 
+    def disconnectAccount(self, login):
+        self.disconnected = getattr(self, "disconnected", []) + [login]
+
     def logEvent(self, log_type, message, user=None):
         self.events.append((log_type, message, user))
 
@@ -160,9 +163,11 @@ def make_user(uid=1, account=None):
 
 @pytest.fixture
 def admin_account():
-    """Account with all four user-management privs set. Loads the
-    constants from HLProtocol so this fixture stays in sync with any
-    future bit reassignments."""
+    """A full administrator: every privilege bit set, including the four
+    user-management ones (named explicitly so this fixture stays in sync
+    with any future bit reassignments). Account managers can't grant or
+    touch privileges they don't have, so tests of account editing need
+    a real administrator."""
     from shared.HLProtocol import (
         PRIV_CREATE_USERS,
         PRIV_DELETE_USERS,
@@ -175,6 +180,7 @@ def admin_account():
         | PRIV_DELETE_USERS
         | PRIV_MODIFY_USERS
         | PRIV_READ_USERS
+        | 0xFFFFFFFFFFFFFFFF
     )
     return make_account(login="admin", name="Administrator", privs=privs, password="x")
 

@@ -811,6 +811,15 @@ class HLServer( Factory ):
     def updateAccounts( self , acct ):
         """ Updates the account information for all current users with login matching that of the specified HLAccount. """
         for ( conn , user ) in self.clients.values():
-            if user.isLoggedIn() and ( user.account.login.upper() == acct.login.upper() ):
+            # Logins are case-sensitive: "Bob" and "bob" are different
+            # accounts, and must not get each other's privileges.
+            if user.isLoggedIn() and user.local and ( user.account.login == acct.login ):
                 user.account.copyFrom( acct )
                 self.dispatchPacket( user.uid , HLPacket( HTLC_HDR_USER_CHANGE ) )
+
+    def disconnectAccount( self , login ):
+        """ Disconnects everyone logged in with ``login`` (e.g. after the
+        account was deleted or renamed, so its privileges end now). """
+        for ( conn , user ) in list( self.clients.values() ):
+            if user.isLoggedIn() and user.local and ( user.account.login == login ):
+                conn.closeConnection()

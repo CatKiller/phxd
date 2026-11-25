@@ -686,3 +686,104 @@ def test_pre_login_irc_nick_is_cleaned(irc_server):
     client = irc_server.irc_client()
     client.send_raw(b"NICK ab\rcd" + b"x" * 100 + b"\r\nUSER a 0 * :a\r\n")
     assert client.user.nick == ("abcd" + "x" * 100)[:32]
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 2: authorization
+# ---------------------------------------------------------------------------
+
+
+class TestPrivateChatPosting:
+    def test_outsiders_cannot_post_into_a_private_chat(self, irc_server):
+        member = irc_server.hotline_client()
+        member.login("guest", "", "member")
+        chat = irc_server.server.createChat()
+        chat.addUser(member.user)
+        member.transport.data = b""
+        member._read = 0
+        outsider = irc_server.hotline_client()
+        outsider.login("guest", "", "outsider")
+        outsider.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "spoofed"), (DATA_CHATID, struct.pack("!L", chat.id))])
+        assert b"spoofed" not in member.transport.data
+        assert errors(outsider) == ["You are not in this chat."]
+
+    def test_members_can_post(self, irc_server):
+        member = irc_server.hotline_client()
+        member.login("guest", "", "member")
+        chat = irc_server.server.createChat()
+        chat.addUser(member.user)
+        member.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "hello"), (DATA_CHATID, struct.pack("!L", chat.id))])
+        assert b"hello" in member.transport.data
+
+
+class TestAccountManagers:
+    """A user who may manage accounts but isn't a full administrator."""
+
+    @pytest.fixture
+    def manager(self):
+        from shared.HLProtocol import PRIV_CREATE_USERS, PRIV_DELETE_USERS, PRIV_MODIFY_USERS, PRIV_READ_USERS
+        from tests.conftest import make_user
+
+        privs = PRIV_CREATE_USERS | PRIV_DELETE_USERS | PRIV_MODIFY_USERS | PRIV_READ_USERS
+        return make_user(uid=5, account=make_account(login="manager", privs=privs))
+
+    def _packet(self, ptype, login, privs=None):
+        from shared.HLProtocol import DATA_LOGIN, DATA_PRIVS, HLEncode, HLPacket
+
+        packet = HLPacket(ptype, 1)
+        packet.addString(DATA_LOGIN, HLEncode(login))
+        if privs is not None:
+            packet.addInt64(DATA_PRIVS, privs)
+        return packet
+
+    def test_cannot_create_more_powerful_account(self, fake_server, manager):
+        from server.handlers.AcctHandler import AcctHandler
+        from shared.HLProtocol import HTLC_HDR_ACCOUNT_CREATE, PRIV_BROADCAST
+
+        with pytest.raises(HLException):
+            AcctHandler().handleAccountCreate(fake_server, manager, self._packet(HTLC_HDR_ACCOUNT_CREATE, "evil", PRIV_BROADCAST))
+        assert fake_server.database.loadAccount("evil") is None
+
+    def test_cannot_modify_or_delete_the_admin(self, fake_server, manager):
+        from server.handlers.AcctHandler import AcctHandler
+        from shared.HLProtocol import HTLC_HDR_ACCOUNT_DELETE, HTLC_HDR_ACCOUNT_MODIFY
+
+        fake_server.database.accounts.append(make_account(login="admin", privs=0xFFFFFFFFFFFFFFFF, password="hash"))
+        with pytest.raises(HLException):
+            AcctHandler().handleAccountModify(fake_server, manager, self._packet(HTLC_HDR_ACCOUNT_MODIFY, "admin", 0))
+        with pytest.raises(HLException):
+            AcctHandler().handleAccountDelete(fake_server, manager, self._packet(HTLC_HDR_ACCOUNT_DELETE, "admin"))
+        assert fake_server.database.loadAccount("admin").password == "hash"
+
+    def test_can_manage_lesser_accounts(self, fake_server, manager):
+        from server.handlers.AcctHandler import AcctHandler
+        from shared.HLProtocol import HTLC_HDR_ACCOUNT_CREATE, PRIV_READ_USERS
+
+        AcctHandler().handleAccountCreate(fake_server, manager, self._packet(HTLC_HDR_ACCOUNT_CREATE, "helper", PRIV_READ_USERS))
+        assert fake_server.database.loadAccount("helper").privs == PRIV_READ_USERS
+
+
+def test_deleting_an_account_disconnects_its_sessions(irc_server):
+    from server.handlers.AcctHandler import AcctHandler
+    from shared.HLProtocol import DATA_LOGIN, HLEncode, HLPacket, HTLC_HDR_ACCOUNT_DELETE
+    from tests.conftest import make_user
+
+    victim = irc_server.hotline_client()
+    victim.login("tester", "s3cret")
+    assert victim.user.isLoggedIn()
+    admin = make_user(uid=999, account=make_account(login="root", privs=0xFFFFFFFFFFFFFFFF))
+    irc_server.server.sendPacket = lambda *args: None
+    packet = HLPacket(HTLC_HDR_ACCOUNT_DELETE, 1)
+    packet.addString(DATA_LOGIN, HLEncode("tester"))
+    AcctHandler().handleAccountDelete(irc_server.server, admin, packet)
+    assert victim.closed
+
+
+def test_account_updates_match_logins_exactly(irc_server):
+    from shared.HLProtocol import PRIV_BROADCAST
+
+    client = irc_server.hotline_client()
+    client.login("tester", "s3cret")
+    other = make_account(login="TESTER", privs=PRIV_BROADCAST)
+    irc_server.server.updateAccounts(other)
+    assert not client.user.hasPriv(PRIV_BROADCAST)

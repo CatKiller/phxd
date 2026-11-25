@@ -58,6 +58,17 @@ def _checkAccountText( *values ):
         if value and CONTROL_CHARS.search( _to_str( value ) ):
             raise HLException( "Logins and names cannot contain control characters." )
 
+def _checkPrivs( user , privs , target = None ):
+    """ Account managers can't hand out privileges they don't have
+    themselves, nor change or delete an account that has some (e.g. reset
+    the admin's password); otherwise any delegated account manager could
+    make themselves administrator. """
+    own = int( user.account.privs or 0 )
+    if privs and ( int( privs ) & ~own ):
+        raise HLException( "You cannot grant privileges you don't have." )
+    if ( target is not None ) and ( int( target.privs or 0 ) & ~own ):
+        raise HLException( "You cannot change an account that has privileges you don't have." )
+
 def installHandler( server ):
     server.registerPacketHandler( AcctHandler() )
 
@@ -104,6 +115,7 @@ class AcctHandler( HLPacketHandler ):
         if acct == None:
             raise HLException("Invalid account.")
         _checkAccountText( name )
+        _checkPrivs( user , privs , acct )
         
         acct.name = name
         acct.privs = privs
@@ -125,6 +137,7 @@ class AcctHandler( HLPacketHandler ):
         if not user.hasPriv( PRIV_CREATE_USERS ):
             raise HLException("You cannot create accounts.")
         _checkAccountText( login , name )
+        _checkPrivs( user , privs )
         if server.database.loadAccount( login ) != None:
             raise HLException("Login already exists.")
         
@@ -141,8 +154,12 @@ class AcctHandler( HLPacketHandler ):
         login = _to_str( HLDecode( packet.getBinary( DATA_LOGIN , b"" ) ) )
         if not user.hasPriv( PRIV_DELETE_USERS ):
             raise HLException("You cannot delete accounts.")
-        if server.database.deleteAccount( login ) < 1:
+        acct = server.database.loadAccount( login )
+        if acct != None:
+            _checkPrivs( user , 0 , acct )
+        if not server.database.deleteAccount( login ):
             raise HLException("Error deleting account.")
+        server.disconnectAccount( login )
         server.sendPacket( user.uid , HLPacket( HTLS_HDR_TASK , packet.seq ) )
         server.logEvent( LOG_TYPE_ACCOUNT , "Deleted account %s." % login , user )
 
@@ -207,9 +224,13 @@ class AcctHandler( HLPacketHandler ):
                 if not user.hasPriv( PRIV_DELETE_USERS ):
                     raise HLException( "You cannot delete accounts." )
                 login = _to_str( HLDecode( sub[DATA_STRING] ) )
+                target = server.database.loadAccount( login )
+                if target != None:
+                    _checkPrivs( user , 0 , target )
                 if not server.database.deleteAccount( login ):
                     server.log.warning( "delete failed for login %r" , login )
                 else:
+                    server.disconnectAccount( login )
                     server.logEvent( LOG_TYPE_ACCOUNT , "Deleted account %s." % login , user )
                 continue
 
@@ -243,6 +264,7 @@ class AcctHandler( HLPacketHandler ):
                 # Modify (or rename + modify).
                 if not user.hasPriv( PRIV_MODIFY_USERS ):
                     raise HLException( "You cannot modify accounts." )
+                _checkPrivs( user , privs_int , existing )
                 # Rename: remove old row and re-insert under the new login.
                 # We do this by mutating the in-memory record and
                 # round-tripping through delete + create when the login
@@ -268,7 +290,10 @@ class AcctHandler( HLPacketHandler ):
                     # delete-then-recreate. Preserve id by clearing it so
                     # saveAccount re-numbers (the classic 1.9 client
                     # doesn't display the internal id anyway).
+                    if server.database.loadAccount( new_login ) != None:
+                        raise HLException( "Login already exists." )
                     server.database.deleteAccount( target_login )
+                    server.disconnectAccount( target_login )
                     existing.login = new_login
                     existing.id = 0
                     server.database.saveAccount( existing )
@@ -281,6 +306,7 @@ class AcctHandler( HLPacketHandler ):
                 # Create.
                 if not user.hasPriv( PRIV_CREATE_USERS ):
                     raise HLException( "You cannot create accounts." )
+                _checkPrivs( user , privs_int )
                 acct = HLAccount( new_login )
                 acct.name = name
                 if privs_int is not None:
