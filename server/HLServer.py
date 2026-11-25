@@ -240,7 +240,7 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                     self.packet.server = self.factory
                     try:
                         self.packet.parse( line )
-                    except ( IndexError , ValueError ):
+                    except ( IndexError , ValueError , StructError ):
                         # Malformed line (e.g. "NICK" with no nick):
                         # ignore it rather than drop the connection.
                         self.packet = HLPacket()

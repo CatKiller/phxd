@@ -110,6 +110,10 @@ class ChatHandler( HLPacketHandler ):
         pchat = server.getChat( ref )
         if ( pchat != None ) and not pchat.hasUser( user ):
             raise HLException( "You are not in this chat." )
+        if pchat == None:
+            # Not a private chat: public chat (and replies to commands
+            # mustn't echo back an arbitrary number as the chat ID).
+            ref = 0
         
         if user.hasPriv( PRIV_SEND_CHAT ) and ( len( str ) > 0 ):
             str = str.replace( "\n" , "\r" )

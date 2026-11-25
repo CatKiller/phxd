@@ -1658,3 +1658,25 @@ def test_out_of_range_colour_is_ignored(irc_server):
     client.send_packet(HTLC_HDR_USER_CHANGE, [(DATA_NICK, "alice"), (DATA_COLOR, struct.pack("!Q", 1 << 40))])
     assert not client.closed
     assert client.user.color < (1 << 32)
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 44: client-supplied numbers
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_chat_id_is_public_chat(irc_server):
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    client.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "/uptime"), (DATA_CHATID, struct.pack("!Q", 1 << 40))])
+    assert not client.closed
+    assert b"Uptime" in client.transport.data
+
+
+@pytest.mark.parametrize("line", ["JOIN #-5", "PART #-5", "KICK #public -5_x", "INVITE -5_x #-1", "PRIVMSG #-3 :hi", "WHOIS -2_x"])
+def test_negative_irc_numbers_are_ignored(irc_server, line):
+    from tests.test_irc import logged_in_irc_client
+
+    alice = logged_in_irc_client(irc_server, "alice")
+    alice.send(line)
+    assert not alice.closed
