@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from twisted.web import xmlrpc , server
 from twisted.internet import reactor
 from shared.HLTypes import *
+from shared.HLProtocol import XMLRPC_INTERFACE
 from config import *
 from xmlrpc.client import Binary
 import time
@@ -13,7 +14,7 @@ class HLWebServices( xmlrpc.XMLRPC ):
         xmlrpc.XMLRPC.__init__( self )
         self.server = hlserver
         if ENABLE_XMLRPC:
-            reactor.listenTCP( XMLRPC_PORT , server.Site( self ) )
+            reactor.listenTCP( XMLRPC_PORT , server.Site( self ) , interface = XMLRPC_INTERFACE )
     
     def xmlrpc_getServerUptime( self ):
         """ Returns the server uptime in seconds. """

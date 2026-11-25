@@ -109,6 +109,9 @@ LOG_DIR = "chatlogs"
 
 FILE_ROOT = "files"
 SHOW_DOTFILES = False
+# Symbolic links inside FILE_ROOT that lead outside it are not followed
+# unless this is True (only enable it if you trust every link in there).
+ALLOW_LINKS_OUTSIDE_FILE_ROOT = False
 
 ################################################################################
 # transfer options
@@ -133,6 +136,9 @@ MAX_GIF_SIZE = 32768
 
 ENABLE_XMLRPC = False
 XMLRPC_PORT = 5800
+# XML-RPC has no authentication and reveals users' IP addresses: it only
+# listens on this interface ("0.0.0.0" for all of them; firewall it then).
+XMLRPC_INTERFACE = "127.0.0.1"
 
 ################################################################################
 # IRC options
@@ -164,6 +170,9 @@ IRC_TLS_PORT = 0
 
 ENABLE_SERVER_LINKING = False
 LINK_PORT = SERVER_PORT + 3
+# Linked servers are trusted completely and there is no authentication,
+# so only these addresses may connect to LINK_PORT.
+LINK_ALLOWED_HOSTS = ["127.0.0.1", "::1"]
 
 
 ################################################################################
@@ -183,3 +192,8 @@ LINK_PORT = SERVER_PORT + 3
 # configuration can change with a restart instead of an image rebuild.
 from shared.HLConfig import loadOverrides as _loadOverrides
 CONFIG_OVERRIDDEN = _loadOverrides( globals() , os.path.dirname( os.path.abspath( __file__ ) ) )
+
+# The Docker entrypoint passes readable copies of the TLS certificate and
+# key (see docker/run-phxd.sh); these take precedence when set.
+TLS_CERT = os.environ.get( "PHXD_TLS_CERT" ) or TLS_CERT
+TLS_KEY = os.environ.get( "PHXD_TLS_KEY" ) or TLS_KEY

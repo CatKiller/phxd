@@ -54,9 +54,19 @@ def buildPath( root , dir , file = None ):
     path = os.sep.join( [ root ] + parts )
     rootAbs = os.path.abspath( root )
     pathAbs = os.path.abspath( path )
-    if ( pathAbs != rootAbs ) and not pathAbs.startswith( rootAbs.rstrip( os.sep ) + os.sep ):
+    if not isInside( pathAbs , rootAbs ):
         raise HLException( "Invalid file or folder name." )
+    if not ALLOW_LINKS_OUTSIDE_FILE_ROOT:
+        # Symbolic links (to folders or files) must not lead outside the
+        # root either. realpath resolves every link along the path,
+        # including in parts that don't exist yet (uploads, new folders).
+        if not isInside( os.path.realpath( path ) , os.path.realpath( root ) ):
+            raise HLException( "Invalid file or folder name." )
     return path
+
+def isInside( path , root ):
+    """ True if absolute ``path`` is ``root`` or inside it. """
+    return ( path == root ) or path.startswith( root.rstrip( os.sep ) + os.sep )
 
 def requireName( name ):
     """ Returns ``name``, or raises HLException if it is empty (which would

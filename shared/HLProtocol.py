@@ -60,6 +60,18 @@ try:
     MIN_FREE_SPACE_MB
 except NameError:
     MIN_FREE_SPACE_MB = 1024
+try:
+    ALLOW_LINKS_OUTSIDE_FILE_ROOT
+except NameError:
+    ALLOW_LINKS_OUTSIDE_FILE_ROOT = False
+try:
+    XMLRPC_INTERFACE
+except NameError:
+    XMLRPC_INTERFACE = "127.0.0.1"
+try:
+    LINK_ALLOWED_HOSTS
+except NameError:
+    LINK_ALLOWED_HOSTS = [ "127.0.0.1" , "::1" ]
 
 def hasFreeSpace( directory , size ):
     """ True if ``size`` more bytes can be written in ``directory`` while

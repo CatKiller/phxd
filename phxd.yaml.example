@@ -49,3 +49,9 @@ log_level: INFO
 # login_timeout: 60
 # Uploads must leave this many megabytes free on the files disk.
 # min_free_space_mb: 1024
+
+# Optional services without authentication; keep them private.
+# enable_xmlrpc: false
+# xmlrpc_interface: 127.0.0.1      # "0.0.0.0" listens everywhere
+# enable_server_linking: false
+# link_allowed_hosts: [127.0.0.1, "::1"]

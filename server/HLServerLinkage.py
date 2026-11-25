@@ -109,6 +109,10 @@ class HLServerLinker( Factory ):
             reactor.listenTCP( LINK_PORT, self )
     
     def buildProtocol( self, addr ):
+        if addr.host not in LINK_ALLOWED_HOSTS:
+            # Returning None makes Twisted close the connection at once.
+            print("refused link connection from %s (not in link_allowed_hosts)" % addr.host)
+            return None
         print("got link connection from %s" % addr.host)
         return LinkConnection( self )
     

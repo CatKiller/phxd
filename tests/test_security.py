@@ -504,3 +504,65 @@ def test_news_command_needs_read_news(irc_server):
     client = irc_server.hotline_client()
     client.login("guest", "", "eve")
     client.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "/news")])
+
+
+# ---------------------------------------------------------------------------
+# Third pass: links out of the file root, XML-RPC and server linking
+# ---------------------------------------------------------------------------
+
+
+class TestLinksOutOfRoot:
+    @pytest.fixture
+    def linked_root(self, tmp_path):
+        root = tmp_path / "files"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("secret")
+        (root / "inside.txt").write_text("inside")
+        os.symlink(outside, root / "escape")
+        os.symlink(outside / "secret.txt", root / "secret-link.txt")
+        os.symlink(root / "inside.txt", root / "alias.txt")
+        return root
+
+    @pytest.mark.parametrize("dirs, name", [(["escape"], "secret.txt"), ([], "secret-link.txt"), (["escape"], "new.txt"), ([], "escape")])
+    def test_links_leading_outside_are_refused(self, linked_root, dirs, name):
+        from server.handlers.FileHandler import buildPath
+
+        with pytest.raises(HLException):
+            buildPath(str(linked_root), dirs, name)
+
+    def test_links_inside_the_root_work(self, linked_root):
+        from server.handlers.FileHandler import buildPath
+
+        assert buildPath(str(linked_root), [], "alias.txt").endswith("alias.txt")
+
+    def test_can_be_allowed(self, linked_root, monkeypatch):
+        import server.handlers.FileHandler as fh
+
+        monkeypatch.setattr(fh, "ALLOW_LINKS_OUTSIDE_FILE_ROOT", True)
+        assert fh.buildPath(str(linked_root), ["escape"], "secret.txt").endswith("secret.txt")
+
+
+def test_link_connections_only_from_allowed_hosts(monkeypatch):
+    from twisted.internet import reactor
+
+    import server.HLServerLinkage as linkage
+    from tests.irc_harness import FakeAddress
+
+    monkeypatch.setattr(reactor, "listenTCP", lambda *args, **kwargs: None)
+    linker = linkage.HLServerLinker(object())
+    assert linker.buildProtocol(FakeAddress("203.0.113.9")) is None
+    assert linker.buildProtocol(FakeAddress("127.0.0.1")) is not None
+
+
+def test_xmlrpc_listens_on_configured_interface(monkeypatch):
+    from twisted.internet import reactor
+
+    import server.HLWebServices as web
+
+    calls = []
+    monkeypatch.setattr(reactor, "listenTCP", lambda *args, **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(web, "ENABLE_XMLRPC", True)
+    web.HLWebServices(object())
+    assert calls == [{"interface": "127.0.0.1"}]
