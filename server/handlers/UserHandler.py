@@ -3,7 +3,7 @@ from shared.HLProtocol import *
 from shared.HLUtils import *
 from shared.HLTypes import *
 from config import *
-from hashlib import md5
+from shared.HLPassword import hashPassword , needsUpgrade , verifyPassword
 import time
 
 def installHandler( server ):
@@ -104,7 +104,7 @@ class UserHandler( HLPacketHandler ):
         # ``HLEncode`` always returns ``bytes`` (the on-the-wire form)
         # post-port, so feed those directly to md5.
         password_for_hash = password if isinstance( password , (bytes , bytearray) ) else password.encode( 'mac-roman' )
-        if user.account.password != md5( password_for_hash ).hexdigest():
+        if not verifyPassword( user.account.password , password_for_hash ):
             # IRC logins carry no nick; keep the one the user already has.
             nick_raw = packet.getString( DATA_NICK , user.nick or "unnamed" )
             user.nick = cleanNick( nick_raw )[:MAX_NICK_LEN]
@@ -116,6 +116,15 @@ class UserHandler( HLPacketHandler ):
             # must not leave it (and its privileges) attached to the user.
             user.account = None
             raise HLException( "Login or password is incorrect." , True)
+        if needsUpgrade( user.account.password ):
+            # Replace the old unsalted MD5 hash now that we know the
+            # password. (Before fileRoot gets its default below, so the
+            # default isn't written into the account.)
+            user.account.password = hashPassword( password_for_hash )
+            try:
+                server.database.saveAccount( user.account )
+            except Exception:
+                server.log.exception( "Could not upgrade the password hash of %r" , login )
         if user.account.fileRoot == "":
             user.account.fileRoot = FILE_ROOT
         

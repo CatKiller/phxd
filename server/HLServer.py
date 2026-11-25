@@ -465,16 +465,16 @@ class HLServer( Factory ):
         could take full control of the server: replace it with a random
         password, shown once in the log. Returns the new password, or None
         if nothing needed doing. """
-        from hashlib import md5
         import secrets
+        from shared.HLPassword import hashPassword , verifyPassword
         try:
             acct = self.database.loadAccount( "admin" )
         except Exception:
             return None
-        if ( acct is None ) or ( acct.password != md5( b"adminpass" ).hexdigest() ):
+        if ( acct is None ) or not verifyPassword( acct.password , b"adminpass" ):
             return None
         password = secrets.token_urlsafe( 12 )
-        acct.password = md5( password.encode( 'ascii' ) ).hexdigest()
+        acct.password = hashPassword( password )
         try:
             saved = self.database.saveAccount( acct ) is not False
         except Exception:

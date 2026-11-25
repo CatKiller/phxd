@@ -983,9 +983,12 @@ def test_default_admin_password_is_replaced(irc_server):
 
     admin = make_account(login="admin", privs=0xFFFFFFFFFFFFFFFF, password=md5(b"adminpass").hexdigest())
     irc_server.database.accounts.append(admin)
+    from shared.HLPassword import verifyPassword
+
     password = irc_server.server.secureDefaultAdmin()
     assert password
-    assert admin.password == md5(password.encode()).hexdigest()
+    assert verifyPassword(admin.password, password)
+    assert not verifyPassword(admin.password, "adminpass")
     assert irc_server.server.secureDefaultAdmin() is None
 
 
@@ -1058,3 +1061,68 @@ def test_user_ids_wrap_within_16_bits(irc_server):
     first.send_packet(HTLC_HDR_USER_LIST, [])
     assert not first.closed
     assert b"late" in first.transport.data
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 13: password storage
+# ---------------------------------------------------------------------------
+
+
+class TestPasswordHashing:
+    def test_hashes_are_salted_stretched_and_fit_the_column(self):
+        from shared.HLPassword import hashPassword, verifyPassword
+
+        a, b = hashPassword("secret"), hashPassword("secret")
+        assert a != b  # salted
+        assert a.startswith("$p1$") and len(a) <= 64
+        assert verifyPassword(a, "secret") and verifyPassword(a, b"secret")
+        assert not verifyPassword(a, "Secret")
+        assert verifyPassword(hashPassword(""), "")
+
+    def test_legacy_md5_still_works(self):
+        from hashlib import md5
+
+        from shared.HLPassword import needsUpgrade, verifyPassword
+
+        legacy = md5(b"secret").hexdigest()
+        assert verifyPassword(legacy, "secret")
+        assert not verifyPassword(legacy, "wrong")
+        assert needsUpgrade(legacy)
+
+    @pytest.mark.parametrize("stored", ["", "garbage", "$p1$", "$p1$!!$!!"])
+    def test_malformed_hashes_never_match(self, stored):
+        from shared.HLPassword import verifyPassword
+
+        assert not verifyPassword(stored, "")
+        assert not verifyPassword(stored, "garbage")
+
+    def test_legacy_hash_is_upgraded_on_login(self, irc_server):
+        from shared.HLPassword import needsUpgrade, verifyPassword
+
+        saved = []
+        real_save = irc_server.database.saveAccount
+        irc_server.database.saveAccount = lambda acct: (saved.append((acct.password, acct.fileRoot)), real_save(acct))[1]
+        client = irc_server.hotline_client()
+        client.login("tester", "s3cret")
+        assert client.user.isLoggedIn()
+        ((password, file_root),) = saved
+        assert not needsUpgrade(password)
+        assert verifyPassword(password, "s3cret")
+        # The default file root filled in for the session isn't saved.
+        assert file_root == ""
+        # And the upgraded hash works for the next login.
+        again = irc_server.hotline_client()
+        again.login("tester", "s3cret")
+        assert again.user.isLoggedIn()
+
+    def test_new_passwords_use_the_new_format(self, fake_server, admin_user):
+        from server.handlers.AcctHandler import AcctHandler
+        from shared.HLPassword import needsUpgrade, verifyPassword
+        from shared.HLProtocol import DATA_LOGIN, DATA_PASSWORD, HLEncode, HLPacket, HTLC_HDR_ACCOUNT_CREATE
+
+        packet = HLPacket(HTLC_HDR_ACCOUNT_CREATE, 1)
+        packet.addString(DATA_LOGIN, HLEncode("newbie"))
+        packet.addString(DATA_PASSWORD, HLEncode("pw123"))
+        AcctHandler().handleAccountCreate(fake_server, admin_user, packet)
+        stored = fake_server.database.loadAccount("newbie").password
+        assert not needsUpgrade(stored) and verifyPassword(stored, "pw123")

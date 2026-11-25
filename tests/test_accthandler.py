@@ -338,10 +338,10 @@ class TestHandleAccountUpdate:
 
         updated = fake_server.database.loadAccount("toiletj")
         # Per HTLC_HDR_ACCOUNT_UPDATE semantics: missing password ->
-        # store md5 of empty string (effectively no password).
-        from hashlib import md5
+        # store the hash of the empty string (effectively no password).
+        from shared.HLPassword import verifyPassword
 
-        assert updated.password == md5(b"").hexdigest()
+        assert verifyPassword(updated.password, b"")
 
     def test_delete_when_only_data_string_present(self, fake_server, admin_user):
         from tests.conftest import make_account

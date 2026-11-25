@@ -3,7 +3,7 @@ from shared.HLProtocol import *
 from shared.HLTypes import *
 from config import *
 from struct import pack , unpack
-from hashlib import md5
+from shared.HLPassword import hashPassword
 
 
 def _flatten_subfield( tag , data ):
@@ -122,7 +122,7 @@ class AcctHandler( HLPacketHandler ):
         # The "no change" sentinel is a single 0xFF byte (HLEncode of "")
         # — match it as bytes since ``HLEncode`` returns ``bytes`` now.
         if passwd != b"\xFF" and passwd != "\xFF":
-            acct.password = md5( _to_bytes( passwd ) ).hexdigest()
+            acct.password = hashPassword( _to_bytes( passwd ) )
         server.database.saveAccount( acct )
         server.sendPacket( user.uid , HLPacket( HTLS_HDR_TASK , packet.seq ) )
         server.updateAccounts( acct )
@@ -142,7 +142,7 @@ class AcctHandler( HLPacketHandler ):
             raise HLException("Login already exists.")
         
         acct = HLAccount( login )
-        acct.password = md5( _to_bytes( passwd ) ).hexdigest()
+        acct.password = hashPassword( _to_bytes( passwd ) )
         acct.name = name
         acct.privs = privs
         
@@ -280,10 +280,10 @@ class AcctHandler( HLPacketHandler ):
                 #   single 0x00  → keep existing
                 #   anything else → set new password (XOR-decoded first)
                 if password_field is None:
-                    existing.password = md5( b"" ).hexdigest()
+                    existing.password = hashPassword( b"" )
                 elif password_field != b"\x00":
                     new_pass = HLDecode( password_field )
-                    existing.password = md5( _to_bytes( new_pass ) ).hexdigest()
+                    existing.password = hashPassword( _to_bytes( new_pass ) )
 
                 if rename:
                     # The text DB keys on login — easiest correct path is
@@ -314,10 +314,10 @@ class AcctHandler( HLPacketHandler ):
                 if password_field is None or password_field == b"\x00":
                     # No password set yet — store hash of empty string,
                     # matching Mobius's "create with empty password" path.
-                    acct.password = md5( b"" ).hexdigest()
+                    acct.password = hashPassword( b"" )
                 else:
                     new_pass = HLDecode( password_field )
-                    acct.password = md5( _to_bytes( new_pass ) ).hexdigest()
+                    acct.password = hashPassword( _to_bytes( new_pass ) )
                 server.database.saveAccount( acct )
                 server.logEvent( LOG_TYPE_ACCOUNT , "Created account %s." % new_login , user )
 
