@@ -924,3 +924,18 @@ def test_tls_renegotiation_is_disabled(tmp_path):
     options = context.set_options(0)  # adds nothing, returns the current options
     assert options & getattr(SSL, "OP_NO_RENEGOTIATION", 0x40000000)
     assert options & SSL.OP_NO_COMPRESSION
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 5: control characters in file names
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["a\nb", "a\rb", "a\tb", "a\x1bb"])
+def test_file_names_with_control_characters_are_refused(tmp_path, name):
+    from server.handlers.FileHandler import buildPath
+
+    with pytest.raises(HLException):
+        buildPath(str(tmp_path), [], name)
+    with pytest.raises(HLException):
+        buildPath(str(tmp_path), [name], "x")

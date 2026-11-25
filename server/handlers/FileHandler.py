@@ -31,7 +31,11 @@ def parseDir( dir ):
 def _checkName( part ):
     """ Raises HLException unless ``part`` is a single, ordinary file or
     folder name: one that can't climb out of, or skip past, its folder. """
-    if ( part in ( "." , ".." ) ) or ( "/" in part ) or ( os.sep in part ) or ( "\0" in part ):
+    if ( part in ( "." , ".." ) ) or ( "/" in part ) or ( os.sep in part ):
+        raise HLException( "Invalid file or folder name." )
+    # Control characters (NUL, CR, LF, ...) have no place in a file name
+    # and would let names forge lines in the server's logs.
+    if CONTROL_CHARS.search( part ):
         raise HLException( "Invalid file or folder name." )
 
 def relativeParts( dir , file = None ):
