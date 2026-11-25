@@ -26,6 +26,9 @@ class IconHandler( HLPacketHandler ):
         server.sendPacket( user.uid , list )
 
     def handleIconSet( self , server , user , packet ):
+        # Every change makes every client download the new icon.
+        if not server.allowRate( "icon" , user.uid , 5 , 60 ):
+            raise HLException("Please wait a minute before changing your icon again.")
         user.gif = packet.getBinary( DATA_GIFICON , b"" )
         if len( user.gif ) > MAX_GIF_SIZE:
             user.gif = b""

@@ -105,6 +105,11 @@ CHAT_FORMAT = "\r%13.13s:  %s"
 EMOTE_FORMAT = "\r ### %s %s"
 MAX_NICK_LEN = 32
 MAX_CHAT_LEN = 4096
+# Chat lines are broadcast to everyone, one packet per line per user: at
+# most MAX_CHAT_LINES lines per message and MAX_CHAT_LINES_PER_10S lines
+# per user per 10 seconds are sent on (0 = unlimited).
+MAX_CHAT_LINES = 20
+MAX_CHAT_LINES_PER_10S = 30
 LOG_CHAT = True
 LOG_DIR = "chatlogs"
 

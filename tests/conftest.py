@@ -121,6 +121,10 @@ class FakeServer:
         # For unit tests we just want the call to be a no-op.
         pass
 
+    def allowRate(self, kind, key, limit, window):
+        # Rate limits are tested against the real server.
+        return True
+
     def disconnectAccount(self, login):
         self.disconnected = getattr(self, "disconnected", []) + [login]
 

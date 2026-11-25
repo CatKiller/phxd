@@ -1188,3 +1188,42 @@ def test_logins_per_address_are_rate_limited(irc_server):
     other = irc_server.hotline_client(host="10.8.8.9")
     other.login("guest", "", "bob")
     assert other.user.isLoggedIn()
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 16: broadcast amplification
+# ---------------------------------------------------------------------------
+
+
+def _chat_lines_received(client):
+    return client.transport.data.count(b"spam")
+
+
+def test_one_message_cannot_become_thousands_of_broadcasts(irc_server):
+    watcher = irc_server.hotline_client()
+    watcher.login("guest", "", "watcher")
+    sender = irc_server.hotline_client()
+    sender.login("guest", "", "sender")
+    sender.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "spam\r" * 5000)])
+    assert _chat_lines_received(watcher) == 20
+
+
+def test_chat_lines_per_user_are_rate_limited(irc_server):
+    watcher = irc_server.hotline_client()
+    watcher.login("guest", "", "watcher")
+    sender = irc_server.hotline_client()
+    sender.login("guest", "", "sender")
+    for _ in range(10):
+        sender.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "spam\rspam\rspam\rspam\rspam")])
+    assert _chat_lines_received(watcher) == 30
+
+
+def test_icon_changes_are_rate_limited(irc_server):
+    from shared.HLProtocol import DATA_GIFICON, HTLC_HDR_ICON_SET
+
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    errors(client)
+    for _ in range(6):
+        client.send_packet(HTLC_HDR_ICON_SET, [(DATA_GIFICON, b"GIF89a")])
+    assert errors(client) == ["Please wait a minute before changing your icon again."]

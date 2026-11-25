@@ -68,6 +68,11 @@ try:
     MAX_COMMANDS_PER_10S
 except NameError:
     MAX_COMMANDS_PER_10S = 5
+try:
+    MAX_CHAT_LINES
+except NameError:
+    MAX_CHAT_LINES = 20
+    MAX_CHAT_LINES_PER_10S = 30
 # Packets (or IRC lines) a connection may send before logging in.
 MAX_PRELOGIN_PACKETS = 50
 try:

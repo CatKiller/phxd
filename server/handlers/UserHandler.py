@@ -227,6 +227,12 @@ class UserHandler( HLPacketHandler ):
             server.sendPacket( user.uid , chat )
     
     def handleUserChange( self , server , user , packet ):
+        # Changes a client asks for (nick, icon) are broadcast to everyone:
+        # limit them. Internal ones (idle, away, account updates) carry
+        # neither field and aren't counted.
+        if ( packet.getString( DATA_NICK ) is not None or packet.getNumber( DATA_ICON ) is not None ) \
+                and not server.allowRate( "userchange" , user.uid , 10 , 10 ):
+            return
         oldnick = user.nick
         user.nick = cleanNick( packet.getString( DATA_NICK , user.nick ) )
         user.icon = packet.getNumber( DATA_ICON , user.icon ) & 0xFFFF

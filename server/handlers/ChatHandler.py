@@ -113,9 +113,14 @@ class ChatHandler( HLPacketHandler ):
         
         if user.hasPriv( PRIV_SEND_CHAT ) and ( len( str ) > 0 ):
             str = str.replace( "\n" , "\r" )
-            lines = str.split( "\r" )
+            lines = [ l for l in str.split( "\r" ) if l ]
+            if MAX_CHAT_LINES > 0:
+                lines = lines[:MAX_CHAT_LINES]
             format = ( CHAT_FORMAT , EMOTE_FORMAT )[( opt > 0 )]
             for lineStr in lines:
+                if not server.allowRate( "chat" , user.uid , MAX_CHAT_LINES_PER_10S , 10 ):
+                    # Flooding: drop the rest of this message.
+                    break
                 line = lineStr[:MAX_CHAT_LEN]
                 if ( len( line ) > 0 ) and ( not dispatchCommand( server , user , line , ref ) ):
                     f_str = format % ( user.nick , line )
