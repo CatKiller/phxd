@@ -51,7 +51,10 @@ except NameError:
 try:
     MAX_PACKET_SIZE
 except NameError:
-    MAX_PACKET_SIZE = 1024 * 1024
+    MAX_PACKET_SIZE = 256 * 1024
+# Largest transaction accepted before logging in (a login is well under
+# 1 KB): a partial packet is held in memory until it is complete.
+MAX_PRELOGIN_PACKET_SIZE = 16 * 1024
 try:
     MAX_IRC_LINE
 except NameError:

@@ -91,7 +91,7 @@ MAX_LOGINS_PER_MINUTE = 20
 SHARED_ADDRESSES = ["auto"]
 MAX_COMMANDS_PER_10S = 5
 LOGIN_FAILURE_WINDOW = 5 * 60
-MAX_PACKET_SIZE = 1024 * 1024
+MAX_PACKET_SIZE = 256 * 1024
 MAX_IRC_LINE = 8192
 
 # Path (relative to the server working directory or absolute) to a plain-

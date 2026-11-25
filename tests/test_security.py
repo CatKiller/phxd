@@ -1500,3 +1500,22 @@ def test_temp_bans_expire_and_stay_bounded(irc_server, monkeypatch):
         server.addTempBan("2001:db8::%x" % i, "x")
     assert len(server.tempBans) <= 51
     assert server.checkForBan("2001:db8::%x" % 499) == "x"
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 29: memory held per connection
+# ---------------------------------------------------------------------------
+
+
+def test_large_packets_are_refused_before_login(irc_server):
+    client = irc_server.hotline_client()
+    client.conn.dataReceived(struct.pack("!5L", HTLC_HDR_CHAT, 1, 0, 100 * 1024, 100 * 1024))
+    assert client.closed
+
+
+def test_large_packets_are_accepted_after_login(irc_server):
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    body = struct.pack("!H", 1) + struct.pack("!2H", DATA_STRING, 60000) + b"x" * 60000
+    client.conn.dataReceived(struct.pack("!5L", HTLC_HDR_CHAT, 99, 0, len(body), len(body)) + body)
+    assert not client.closed

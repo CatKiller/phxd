@@ -248,7 +248,9 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                     continue
                 if len( self.buffer ) >= 20:
                     size = unpack( "!L" , self.buffer[12:16] )[0]
-                    if size > MAX_PACKET_SIZE:
+                    user = self.factory.getUser( self.connID )
+                    limit = MAX_PACKET_SIZE if ( user is not None and user.isLoggedIn() ) else MAX_PRELOGIN_PACKET_SIZE
+                    if size > limit:
                         self.factory.log.warning( "Oversized packet (%d bytes) from connID=%d, closing" , size , self.connID )
                         self.buffer = b''
                         self.closeConnection()
