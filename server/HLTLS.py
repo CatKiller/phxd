@@ -115,9 +115,14 @@ class GracefulCloseMixin:
 
     _closeTimer = None
     _connectionGone = False
+    # Set once the connection is being closed: no more input is processed
+    # (anything the peer sent after that, or that was already buffered,
+    # is ignored).
+    closing = False
 
     def closeConnection( self ):
         from twisted.internet import reactor
+        self.closing = True
         self.transport.loseConnection()
         if self._closeTimer is None and not self._connectionGone:
             self._closeTimer = reactor.callLater( CLOSE_TIMEOUT , self._abortIfStillOpen )

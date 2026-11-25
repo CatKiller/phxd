@@ -109,6 +109,7 @@ class HLUpload( HLTransfer ):
         HLTransfer.__init__( self , id , path , owner , 1 )
         # Append-mode binary so writes don't try to text-encode incoming
         # bytes from the upload connection.
+        self.renamed = False
         self.file = open( path , "ab" )
         self.initialSize = os.path.getsize( path )
         self.buffer = b""
@@ -166,11 +167,24 @@ class HLUpload( HLTransfer ):
                         return True
                     self.state = STATE_HEADER
     
+    def isComplete( self ):
+        """ An upload whose size isn't known yet is not complete. """
+        return ( self.total > 0 ) and ( self.transferred >= self.total )
+
     def finish( self ):
-        """ Called when the upload connection closes. If the upload is complete, renames the file, stripping off the .hpf extension. """
+        """ Called when the upload is done or its connection closes (so
+        possibly twice). If the upload is complete, renames the file once,
+        stripping off the .hpf extension, unless that would replace an
+        existing file. """
         self.file.close()
-        if self.isComplete() and self.path.endswith( ".hpf" ):
-            newPath = self.path[:-4]
-            os.rename( self.path , newPath )
-            self.path = newPath
-            self.name = os.path.basename( self.path )
+        if self.renamed or not self.isComplete() or not self.path.endswith( ".hpf" ):
+            return
+        self.renamed = True
+        newPath = self.path[:-4]
+        if os.path.lexists( newPath ):
+            # Created meanwhile (e.g. another upload of the same name):
+            # keep this one as .hpf rather than overwrite it.
+            return
+        os.rename( self.path , newPath )
+        self.path = newPath
+        self.name = os.path.basename( self.path )

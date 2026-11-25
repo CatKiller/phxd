@@ -122,6 +122,8 @@ class HLConnection( GracefulCloseMixin , Protocol ):
             )
         except Exception:
             pass
+        if self.closing:
+            return
         self.buffer += data
         try:
             self.parseBuffer()
@@ -136,6 +138,11 @@ class HLConnection( GracefulCloseMixin , Protocol ):
         if self.gotMagic:
             done = False
             while not done:
+                if self.closing:
+                    # E.g. a failed login: don't process anything queued
+                    # behind it.
+                    self.buffer = b''
+                    return
                 if self.isIRC:
                     # One complete line at a time; a line (or a partial
                     # one) longer than MAX_IRC_LINE closes the connection
@@ -192,6 +199,7 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                     # If there is still data in the buffer, check for packets.
                     if len( self.buffer ) > 0:
                         self.parseBuffer()
+                    return
                 else:
                     # Not hotline, assume IRC. Multiple commands can be chained in IRC.
                     # Only look at complete lines; CAP and PASS may precede NICK/USER.
@@ -215,7 +223,7 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                     for c in cmds:
                         parts = c.split( " " , 1 )
                         if parts[0].upper() == "NICK" and len( parts ) > 1 and parts[1].strip( ": " ):
-                            nick = parts[1].strip( ": " )
+                            nick = cleanNick( parts[1].strip( ": " ) )[:MAX_NICK_LEN] or "Unnamed"
                             break
                     # Answer CAP LS before the welcome so clients finish negotiation.
                     self.ircReplyCapLS( cmds )
@@ -272,7 +280,7 @@ class HLConnection( GracefulCloseMixin , Protocol ):
         """ Logs an IRC client in as guest if it has not logged in by itself. """
         self.guestTimer = None
         user = self.factory.getUser( self.connID )
-        if ( not user ) or user.isLoggedIn():
+        if ( not user ) or user.isLoggedIn() or self.closing:
             return
         if self.factory.database.loadAccount( "guest" ) == None:
             self.ircNotice( "No guest account on this server, please IDENTIFY to log in." )

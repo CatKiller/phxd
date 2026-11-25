@@ -30,6 +30,8 @@ class HLTransferConnection( GracefulCloseMixin , Protocol ):
     def dataReceived( self , data ):
         """ Called when the transfer connection receives data. Should only happen
         for uploads, and for the 16-byte magic header for all transfers. """
+        if self.closing:
+            return
         if self.gotMagic:
             if ( self.info != None ) and ( self.info.type == XFER_TYPE_UPLOAD ):
                 self.info.parseData( data )
@@ -171,9 +173,10 @@ class HLFileServer (Factory):
     
     def timeoutTransfer( self , id ):
         """ Called after an initial timeout to remove the dead transfer from the list of transfers. """
+        self.timeouts.pop( id , None )
         if id in self.transfers:
-            del self.timeouts[id]
-            del self.transfers[id]
+            # Close its file: transfers open it when they are requested.
+            self.transfers.pop( id ).finish()
     
     def removeTransfer( self , xfid ):
         """ Removes a transfer from the list of transfers. """

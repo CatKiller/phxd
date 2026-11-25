@@ -566,3 +566,123 @@ def test_xmlrpc_listens_on_configured_interface(monkeypatch):
     monkeypatch.setattr(web, "ENABLE_XMLRPC", True)
     web.HLWebServices(object())
     assert calls == [{"interface": "127.0.0.1"}]
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 1 (consecutive passes)
+# ---------------------------------------------------------------------------
+
+
+def close_later(client):
+    """Like a real Twisted transport: loseConnection only starts closing;
+    connectionLost comes later, so the protocol may still be holding
+    buffered data when it decides to close."""
+
+    def lose():
+        client.transport.closed = True
+
+    client.transport.loseConnection = lose
+
+
+class TestNothingProcessedAfterClose:
+    def test_logins_queued_behind_a_failed_one_are_ignored(self, irc_server):
+        client = irc_server.hotline_client(host="10.4.4.4")
+        close_later(client)
+        # Two logins in one write: the second (correct) one must not run
+        # on a connection already closing because of the first.
+        sent = []
+        real = client.conn.dataReceived
+        client.conn.dataReceived = lambda data: sent.append(data)
+        client.login("tester", "wrong")
+        client.login("tester", "s3cret")
+        client.conn.dataReceived = real
+        client.conn.dataReceived(b"".join(sent))
+        assert client.closed
+        assert not client.user.isLoggedIn()
+
+    def test_irc_lines_after_a_failed_login_are_ignored(self, irc_server):
+        client = irc_server.irc_client()
+        close_later(client)
+        client.register("alice")
+        client.send("PRIVMSG loginserv tester wrong", "PRIVMSG loginserv tester s3cret")
+        assert not client.user.isLoggedIn()
+
+
+class TestUploadFinish:
+    def _upload(self, tmp_path, name, total=10):
+        from shared.HLTransfer import HLUpload
+
+        up = HLUpload(1, str(tmp_path / (name + ".hpf")), 1)
+        up.total = total
+        up.transferred = total
+        return up
+
+    def test_finishing_twice_never_renames_twice(self, tmp_path):
+        (tmp_path / "readme.txt").write_text("original")
+        up = self._upload(tmp_path, "readme.txt.hpf")
+        up.finish()
+        up.finish()
+        assert (tmp_path / "readme.txt").read_text() == "original"
+        assert (tmp_path / "readme.txt.hpf").exists()
+
+    def test_existing_file_is_not_replaced(self, tmp_path):
+        up = self._upload(tmp_path, "x")
+        (tmp_path / "x").write_text("someone else's")
+        up.finish()
+        assert (tmp_path / "x").read_text() == "someone else's"
+
+    def test_unknown_size_is_not_complete(self, tmp_path):
+        up = self._upload(tmp_path, "empty", total=0)
+        up.finish()
+        assert not (tmp_path / "empty").exists()
+
+
+def test_abandoned_transfers_close_their_file(irc_server, tmp_path):
+    root = tmp_path / "files"
+    root.mkdir(exist_ok=True)
+    (root / "a.txt").write_text("a")
+    for acct in irc_server.database.accounts:
+        acct.fileRoot = str(root)
+        acct.privs |= PRIV_DOWNLOAD_FILES
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    client.send_packet(HTLC_HDR_FILE_GET, [(DATA_FILENAME, "a.txt")])
+    (xfer,) = irc_server.server.fileserver.transfers.values()
+    irc_server.clock.advance(31)
+    assert irc_server.server.fileserver.transfers == {}
+    assert xfer.file.closed
+
+
+def test_refused_upload_writes_nothing_more(irc_server, tmp_path, monkeypatch):
+    import shared.HLProtocol as proto
+    from shared.HLProtocol import HTLC_HDR_FILE_PUT, PRIV_UPLOAD_ANYWHERE, PRIV_UPLOAD_FILES
+    from server.HLFileServer import HLTransferConnection
+
+    root = tmp_path / "files"
+    root.mkdir(exist_ok=True)
+    for acct in irc_server.database.accounts:
+        acct.fileRoot = str(root)
+        acct.privs |= PRIV_UPLOAD_FILES | PRIV_UPLOAD_ANYWHERE
+    client = irc_server.hotline_client(host="10.0.0.1")
+    client.login("guest", "", "alice")
+    client.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "big.bin")])
+    (xfer,) = irc_server.server.fileserver.transfers.values()
+    monkeypatch.setattr(proto, "MIN_FREE_SPACE_MB", 1 << 40)
+    conn = HLTransferConnection()
+    conn.factory = irc_server.server.fileserver
+    conn.makeConnection(FakeXferTransport("10.0.0.1"))
+    from shared.HLProtocol import HLCharConst
+
+    header = struct.pack("!LHLLLLH", HLCharConst("FILP"), 1, 0, 0, 0, 0, 1)
+    fork = struct.pack("!4L", HLCharConst("DATA"), 0, 0, 100000)
+    conn.dataReceived(struct.pack("!4L", 0x48545846, xfer.id, 100000, 0))
+    conn.dataReceived(header + fork + b"x" * 1000)
+    if not xfer.file.closed:
+        xfer.file.flush()
+    assert os.path.getsize(root / "big.bin.hpf") == 0
+
+
+def test_pre_login_irc_nick_is_cleaned(irc_server):
+    client = irc_server.irc_client()
+    client.send_raw(b"NICK ab\rcd" + b"x" * 100 + b"\r\nUSER a 0 * :a\r\n")
+    assert client.user.nick == ("abcd" + "x" * 100)[:32]

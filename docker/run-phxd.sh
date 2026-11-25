@@ -55,6 +55,11 @@ fi
 
 # 2. Data directories.
 for dir in "$db_dir" "$files_dir"; do
+	case "$dir" in
+		/|/app|/app/server|/app/shared|/app/support|/bin*|/boot*|/dev*|/etc*|/lib*|/proc*|/root*|/run*|/sbin*|/sys*|/usr*|/var)
+			echo "phxd: refusing to use $dir as a data directory (check db_file_basepath / file_root)" >&2
+			exit 1 ;;
+	esac
 	if [ "$(stat -c %u "$dir")" != "$run_uid" ]; then
 		echo "phxd: giving $dir to uid $run_uid"
 		chown -R "$run_uid:$run_gid" "$dir" || {
