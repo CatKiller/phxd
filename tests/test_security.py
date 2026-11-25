@@ -1478,3 +1478,25 @@ def test_rate_tables_stay_bounded(irc_server, monkeypatch):
     for _ in range(5):
         server.recordLoginFailure("2001:db8::ffff")
     assert server.checkForBan("2001:db8::ffff") is not None
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 28: the temporary ban table
+# ---------------------------------------------------------------------------
+
+
+def test_temp_bans_expire_and_stay_bounded(irc_server, monkeypatch):
+    import server.HLServer as hlserver
+
+    now = [1000.0]
+    monkeypatch.setattr(hlserver.time, "time", lambda: now[0])
+    monkeypatch.setattr(hlserver, "MAX_TRACKED_KEYS", 50)
+    server = irc_server.server
+    server.addTempBan("10.1.2.3", "reason")
+    assert server.checkForBan("10.1.2.3") == "reason"
+    now[0] += hlserver.BAN_TIME + 1
+    assert server.checkForBan("10.1.2.3") is None
+    for i in range(500):
+        server.addTempBan("2001:db8::%x" % i, "x")
+    assert len(server.tempBans) <= 51
+    assert server.checkForBan("2001:db8::%x" % 499) == "x"

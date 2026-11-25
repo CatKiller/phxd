@@ -797,9 +797,30 @@ class HLServer( Factory ):
         if self.isShared( addr ):
             self.log.warning( "Not banning %s: it stands for many clients" , addr )
             return
-        if addr not in self.tempBans:
-            self.tempBans[addr] = reason
-            reactor.callLater( BAN_TIME , self.removeTempBan , addr )
+        now = time.time()
+        if self._activeBan( addr , now ) is not None:
+            return
+        # Store the expiry time instead of scheduling a timer per ban, in
+        # a table kept in expiry order and bounded like the others (an
+        # attacker with many addresses could otherwise grow it at will).
+        self.tempBans.pop( addr , None )
+        self.tempBans[addr] = ( reason , now + BAN_TIME )
+        while self.tempBans:
+            first = next( iter( self.tempBans ) )
+            if ( len( self.tempBans ) > MAX_TRACKED_KEYS ) or ( self.tempBans[first][1] <= now ):
+                del self.tempBans[first]
+            else:
+                break
+
+    def _activeBan( self , addr , now ):
+        """ The reason addr is temporarily banned, or None. """
+        entry = self.tempBans.get( addr )
+        if entry is None:
+            return None
+        if entry[1] <= now:
+            del self.tempBans[addr]
+            return None
+        return entry[0]
     
     def removeTempBan( self , addr ):
         """ Removes a temporary ban for addr, if it exists. """
@@ -879,8 +900,9 @@ class HLServer( Factory ):
 
     def checkForBan( self , addr ):
         """ Returns the reason given for a ban, if it exists. Otherwise returns None. """
-        if addr in self.tempBans:
-            return self.tempBans[addr]
+        reason = self._activeBan( addr , time.time() )
+        if reason is not None:
+            return reason
         return self.database.checkBanlist( addr )
     
     def buildProtocol( self , addr ):
