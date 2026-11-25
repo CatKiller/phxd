@@ -1367,3 +1367,40 @@ def test_malformed_hotline_packet_closes_quietly(irc_server):
     body = struct.pack("!H", 5)
     client.conn.dataReceived(struct.pack("!5L", HTLC_HDR_CHAT, 1, 0, len(body), len(body)) + body)
     assert client.closed
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 25: log volume after login, connection rate
+# ---------------------------------------------------------------------------
+
+
+def test_connection_rate_per_address_is_limited(irc_server):
+    clients = []
+    for _ in range(61):
+        c = irc_server.irc_client(host="10.6.6.6")
+        clients.append(c)
+        c.conn.closeConnection()
+    assert clients[-1].closed
+    assert irc_server.server.allowConnect("10.6.6.7")
+
+
+def test_refused_requests_are_not_logged_above_debug(irc_server):
+    from shared.HLProtocol import HTLC_HDR_ICON_LIST
+
+    import logging
+
+    records = []
+
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record)
+    irc_server.server.log.addHandler(handler)
+    try:
+        client = irc_server.hotline_client()
+        client.login("guest", "", "alice")
+        for _ in range(30):
+            client.send_packet(HTLC_HDR_ICON_LIST, [])  # rate-limited after 5
+            client.send_packet(0x7777, [])  # unknown type
+    finally:
+        irc_server.server.log.removeHandler(handler)
+    noisy = [r for r in records if r.levelno >= logging.INFO and ("HLException" in r.msg or "unknown packet" in r.msg)]
+    assert noisy == []

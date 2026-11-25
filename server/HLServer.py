@@ -99,12 +99,17 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                 enableDeadPeerDetection( sock )
         except OSError as e:
             self.factory.log.warning( "Could not enable dead connection detection: %s" , e )
+        user = self.factory.getUser( self.connID )
+        if ( user is not None ) and not self.factory.allowConnect( user.ip ):
+            # Connecting too often: drop it without logging every attempt.
+            self.quiet = True
+            self.closeConnection()
+            return
         try:
             peer = self.transport.getPeer()
             self.factory.log.info( "Client connected: %s:%s (connID=%d)" , peer.host , peer.port , self.connID )
         except Exception:
             pass
-        user = self.factory.getUser( self.connID )
         if ( user is not None ) and self.factory.tooManyConnections( user.ip ):
             self.factory.log.warning( "Too many connections from %s, refusing connID=%d" , user.ip , self.connID )
             self.closeConnection()
@@ -119,7 +124,8 @@ class HLConnection( GracefulCloseMixin , Protocol ):
         if ( self.loginTimer != None ) and self.loginTimer.active():
             self.loginTimer.cancel()
         try:
-            self.factory.log.info( "Client disconnected (connID=%d): %s" , self.connID , reason.getErrorMessage() if hasattr( reason , 'getErrorMessage' ) else reason )
+            if not getattr( self , "quiet" , False ):
+                self.factory.log.info( "Client disconnected (connID=%d): %s" , self.connID , reason.getErrorMessage() if hasattr( reason , 'getErrorMessage' ) else reason )
         except Exception:
             pass
         self.factory.removeConnection( self.connID )
@@ -418,8 +424,11 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                     # Debug only: anyone can send these, as fast as they like.
                     self.factory.log.debug( "packet before login (connID=%d): %s" , self.connID , self.packet )
         except HLException as ex:
-            # Unhandled packets and task errors will be caught here.
-            self.factory.log.warning(
+            # Unhandled packets and task errors will be caught here. These
+            # are ordinary refusals ("You are not allowed...", "Please
+            # wait..."), which anyone can trigger over and over: only log
+            # them when debugging (failed logins are logged on their own).
+            self.factory.log.debug(
                 "HLException on connID=%d packet.type=0x%x fatal=%s: %s" ,
                 self.connID , self.packet.type , ex.fatal , ex.msg
             )
@@ -784,6 +793,17 @@ class HLServer( Factory ):
                 del self.rateEvents[k]
         return True
 
+    def allowConnect( self , addr ):
+        """ False if addr opened MAX_CONNECTS_PER_MINUTE connections in the
+        last minute. Logs once when an address starts being refused. """
+        if self.isShared( addr ):
+            return True
+        if self.allowRate( "connect" , addr , MAX_CONNECTS_PER_MINUTE , 60 ):
+            return True
+        if self.allowRate( "connect-refused-log" , addr , 1 , 60 ):
+            self.log.warning( "Refusing connections from %s for a while: more than %d per minute" , addr , MAX_CONNECTS_PER_MINUTE )
+        return False
+
     def tooManyConnections( self , addr ):
         """ True if addr has more than MAX_CONNECTIONS_PER_IP connections. """
         if ( MAX_CONNECTIONS_PER_IP <= 0 ) or self.isShared( addr ):
@@ -908,7 +928,7 @@ class HLServer( Factory ):
                 # time a Hotline 1.5+ feature we don't implement gets
                 # exercised. The HLException still bubbles up so the
                 # client receives an error TASK reply.
-                self.log.info( "unknown packet type 0x%x (seq=%d) from connID=%d — ignoring" , packet.type , packet.seq , connID )
+                self.log.debug( "unknown packet type 0x%x (seq=%d) from connID=%d — ignoring" , packet.type , packet.seq , connID )
                 raise HLException("unknown packet type")
 
     #def returnClients( self ):

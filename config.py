@@ -69,6 +69,8 @@ BAN_TIME = 15 * 60
 #  - MAX_IRC_LINE: longest IRC line accepted, in bytes.
 LOGIN_TIMEOUT = 60
 MAX_CONNECTIONS_PER_IP = 10
+# New connections accepted per address per minute (0 = unlimited).
+MAX_CONNECTS_PER_MINUTE = 60
 MAX_LOGIN_FAILURES = 5
 # Login attempts (successful or not) accepted per address per minute, and
 # server-side scripts or /find searches per user per 10 seconds: each
