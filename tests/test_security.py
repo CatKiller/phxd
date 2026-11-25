@@ -1449,3 +1449,32 @@ class TestLogRateLimiter:
         assert sum(r.startswith("SECURITY") for r in records) == 5
         logger.info("still within budget")
         assert records[-1] == "still within budget"
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 27: memory under many-address attacks
+# ---------------------------------------------------------------------------
+
+
+def test_total_connections_are_capped(irc_server, monkeypatch):
+    import server.HLServer as hlserver
+
+    monkeypatch.setattr(hlserver, "MAX_CONNECTIONS_TOTAL", 5)
+    clients = [irc_server.irc_client(host="10.%d.0.1" % i) for i in range(6)]
+    assert [c.closed for c in clients] == [False] * 5 + [True]
+
+
+def test_rate_tables_stay_bounded(irc_server, monkeypatch):
+    import server.HLServer as hlserver
+
+    monkeypatch.setattr(hlserver, "MAX_TRACKED_KEYS", 100)
+    server = irc_server.server
+    for i in range(1000):
+        server.allowRate("connect", "2001:db8::%x" % i, 60, 60)
+        server.recordLoginFailure("2001:db8::%x" % i)
+    assert len(server.rateEvents) <= 101
+    assert len(server.loginFailures) <= 101
+    # Limits still work for an address being tracked.
+    for _ in range(5):
+        server.recordLoginFailure("2001:db8::ffff")
+    assert server.checkForBan("2001:db8::ffff") is not None

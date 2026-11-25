@@ -74,6 +74,9 @@ BAN_TIME = 15 * 60
 #  - MAX_IRC_LINE: longest IRC line accepted, in bytes.
 LOGIN_TIMEOUT = 60
 MAX_CONNECTIONS_PER_IP = 10
+# Connections accepted at once in total, on the main and on the transfer
+# port each, whatever their address (0 = unlimited).
+MAX_CONNECTIONS_TOTAL = 1000
 # New connections accepted per address per minute (0 = unlimited).
 MAX_CONNECTS_PER_MINUTE = 60
 MAX_LOGIN_FAILURES = 5

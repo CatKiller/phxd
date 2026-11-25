@@ -142,6 +142,11 @@ class HLConnection( GracefulCloseMixin , Protocol ):
         except OSError as e:
             self.factory.log.warning( "Could not enable dead connection detection: %s" , e )
         user = self.factory.getUser( self.connID )
+        if ( MAX_CONNECTIONS_TOTAL > 0 ) and ( len( self.factory.clients ) > MAX_CONNECTIONS_TOTAL ):
+            self.quiet = True
+            self.factory.logFull()
+            self.closeConnection()
+            return
         if ( user is not None ) and not self.factory.allowConnect( user.ip ):
             # Connecting too often: drop it without logging every attempt.
             self.quiet = True
@@ -807,12 +812,12 @@ class HLServer( Factory ):
         if ( MAX_LOGIN_FAILURES <= 0 ) or self.isShared( addr ):
             return
         now = time.time()
-        recent = [ t for t in self.loginFailures.get( addr , [] ) if now - t < LOGIN_FAILURE_WINDOW ]
+        recent = [ t for t in self.loginFailures.pop( addr , [] ) if now - t < LOGIN_FAILURE_WINDOW ]
         recent.append( now )
+        # (Re)inserted last: the dict stays ordered by most recent failure,
+        # so the oldest entries are at the front.
         self.loginFailures[addr] = recent
-        # Forget addresses whose failures have all expired.
-        for other in [ a for a , times in self.loginFailures.items() if now - times[-1] >= LOGIN_FAILURE_WINDOW ]:
-            del self.loginFailures[other]
+        self._trim( self.loginFailures , now , LOGIN_FAILURE_WINDOW )
         if len( recent ) >= MAX_LOGIN_FAILURES:
             self.log.warning( "Banning %s for %d seconds after %d failed logins" , addr , BAN_TIME , len( recent ) )
             self.addTempBan( addr , "Too many failed logins." )
@@ -826,17 +831,33 @@ class HLServer( Factory ):
         if limit <= 0:
             return True
         now = time.time()
-        recent = [ t for t in self.rateEvents.get( ( kind , key ) , [] ) if now - t < window ]
-        if len( recent ) >= limit:
-            self.rateEvents[( kind , key )] = recent
-            return False
-        recent.append( now )
+        recent = [ t for t in self.rateEvents.pop( ( kind , key ) , [] ) if now - t < window ]
+        allowed = len( recent ) < limit
+        if allowed:
+            recent.append( now )
+        # (Re)inserted last, so the dict stays ordered by last activity.
         self.rateEvents[( kind , key )] = recent
-        if len( self.rateEvents ) > 10000:
-            # Forget keys whose events have all expired.
-            for k in [ k for k , times in self.rateEvents.items() if now - times[-1] >= 600 ]:
-                del self.rateEvents[k]
-        return True
+        self._trim( self.rateEvents , now , 60 )
+        return allowed
+
+    def _trim( self , table , now , window ):
+        """ Keeps ``table`` (key -> event times, ordered oldest activity
+        first) bounded: drops leading entries that are older than
+        ``window`` or beyond MAX_TRACKED_KEYS. Only the expired or excess
+        entries at the front are looked at, so this is cheap. """
+        while table:
+            key = next( iter( table ) )
+            times = table[key]
+            if ( len( table ) > MAX_TRACKED_KEYS ) or ( not times ) or ( now - times[-1] >= window ):
+                del table[key]
+            else:
+                break
+
+    def logFull( self ):
+        """ Logs (at most once a minute) that connections are refused
+        because MAX_CONNECTIONS_TOTAL is reached. """
+        if self.allowRate( "full-log" , None , 1 , 60 ):
+            self.log.warning( "Refusing connections: %d connections already open (max_connections_total)" , MAX_CONNECTIONS_TOTAL )
 
     def allowConnect( self , addr ):
         """ False if addr opened MAX_CONNECTS_PER_MINUTE connections in the

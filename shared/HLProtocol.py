@@ -61,6 +61,14 @@ try:
 except NameError:
     MIN_FREE_SPACE_MB = 1024
 try:
+    MAX_CONNECTIONS_TOTAL
+except NameError:
+    MAX_CONNECTIONS_TOTAL = 1000
+# Addresses tracked at once by the rate limits and failed-login counts;
+# beyond this, the oldest are forgotten (bounding their memory and the
+# cost of cleaning them up, whatever the number of attacking addresses).
+MAX_TRACKED_KEYS = 20000
+try:
     LOG_LINES_PER_MINUTE
 except NameError:
     LOG_LINES_PER_MINUTE = 300
