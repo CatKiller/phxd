@@ -6,6 +6,9 @@ from config import *
 from shared.HLPassword import hashPassword , needsUpgrade , verifyPassword
 import time
 
+# Checked against when an account doesn't exist (see handleLogin).
+DUMMY_HASH = hashPassword( "phxd-no-such-account" )
+
 def installHandler( server ):
     server.registerPacketHandler( UserHandler() )
 
@@ -98,7 +101,10 @@ class UserHandler( HLPacketHandler ):
                 login = storedLogin
                 user.account = server.database.loadAccount( login )
         if user.account == None:
-            server.log.info( "Login failed: account %r not found (ip=%s)" , login , user.ip )
+            # Take as long as checking a real password, so response times
+            # don't reveal which accounts exist either.
+            verifyPassword( DUMMY_HASH , password )
+            server.log.info( "Login failed: account %r not found (ip=%s)" , login[:64] , user.ip )
             server.recordLoginFailure( user.ip )
             # Same message as a wrong password, so that failed logins
             # don't reveal which accounts exist.
@@ -112,7 +118,7 @@ class UserHandler( HLPacketHandler ):
             user.nick = cleanNick( nick_raw )[:MAX_NICK_LEN]
 
             server.logEvent( LOG_TYPE_LOGIN , "Login failure" , user )
-            server.log.info( "Login failed: bad password for %r (ip=%s)" , login , user.ip )
+            server.log.info( "Login failed: bad password for %r (ip=%s)" , login[:64] , user.ip )
             server.recordLoginFailure( user.ip )
             # The account was loaded for this attempt only; a failed login
             # must not leave it (and its privileges) attached to the user.

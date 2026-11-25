@@ -1519,3 +1519,35 @@ def test_large_packets_are_accepted_after_login(irc_server):
     body = struct.pack("!H", 1) + struct.pack("!2H", DATA_STRING, 60000) + b"x" * 60000
     client.conn.dataReceived(struct.pack("!5L", HTLC_HDR_CHAT, 99, 0, len(body), len(body)) + body)
     assert not client.closed
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 30: login timing and log line size
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_accounts_cost_a_password_check_too(irc_server, monkeypatch):
+    import server.handlers.UserHandler as uh
+
+    checks = []
+    real = uh.verifyPassword
+    monkeypatch.setattr(uh, "verifyPassword", lambda stored, pw: checks.append(stored) or real(stored, pw))
+    client = irc_server.hotline_client()
+    client.login("no-such-account", "whatever")
+    assert checks == [uh.DUMMY_HASH]
+
+
+def test_logged_login_names_are_truncated(irc_server):
+    import logging
+
+    records = []
+    handler = logging.Handler()
+    handler.setLevel(logging.INFO)  # what's logged with the default log_level
+    handler.emit = lambda r: records.append(r.getMessage())
+    irc_server.server.log.addHandler(handler)
+    try:
+        client = irc_server.hotline_client()
+        client.login("x" * 5000, "pw")
+    finally:
+        irc_server.server.log.removeHandler(handler)
+    assert records and max(len(r) for r in records) < 300
