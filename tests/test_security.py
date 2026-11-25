@@ -939,3 +939,58 @@ def test_file_names_with_control_characters_are_refused(tmp_path, name):
         buildPath(str(tmp_path), [], name)
     with pytest.raises(HLException):
         buildPath(str(tmp_path), [name], "x")
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 6: hidden files and the default admin password
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("dirs, name", [([], ".env"), ([".git"], "config"), (["sub"], ".hidden")])
+def test_hidden_files_are_unreachable(tmp_path, dirs, name):
+    from server.handlers.FileHandler import buildPath
+
+    with pytest.raises(HLException):
+        buildPath(str(tmp_path), dirs, name)
+
+
+def test_hidden_files_reachable_when_shown(tmp_path, monkeypatch):
+    import server.handlers.FileHandler as fh
+
+    monkeypatch.setattr(fh, "SHOW_DOTFILES", True)
+    assert fh.buildPath(str(tmp_path), [], ".env").endswith(".env")
+
+
+def test_find_skips_hidden_files(irc_server, tmp_path):
+    root = tmp_path / "files"
+    root.mkdir(exist_ok=True)
+    (root / ".secret-match").write_text("")
+    (root / ".git").mkdir()
+    (root / ".git" / "match").write_text("")
+    (root / "visible-match").write_text("")
+    for acct in irc_server.database.accounts:
+        acct.fileRoot = str(root)
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    client.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "/find match")])
+    assert b"visible-match" in client.transport.data
+    assert b"secret" not in client.transport.data
+    assert b".git" not in client.transport.data
+
+
+def test_default_admin_password_is_replaced(irc_server):
+    from hashlib import md5
+
+    admin = make_account(login="admin", privs=0xFFFFFFFFFFFFFFFF, password=md5(b"adminpass").hexdigest())
+    irc_server.database.accounts.append(admin)
+    password = irc_server.server.secureDefaultAdmin()
+    assert password
+    assert admin.password == md5(password.encode()).hexdigest()
+    assert irc_server.server.secureDefaultAdmin() is None
+
+
+def test_changed_admin_password_is_left_alone(irc_server):
+    admin = make_account(login="admin", privs=0xFFFFFFFFFFFFFFFF, password="somethingelse")
+    irc_server.database.accounts.append(admin)
+    assert irc_server.server.secureDefaultAdmin() is None
+    assert admin.password == "somethingelse"

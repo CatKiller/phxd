@@ -176,7 +176,7 @@ Rebuilding the image is only needed to update **phxd** itself. Since all of **ph
 # Usage
 Once running, **phxd** can be connected to by pointing any Hotline or IRC client at its **"server\_port"** (5500 by default; the Docker example above also publishes it on the usual IRC port 6667), or, over TLS, at **"hotline\_tls\_port"** (Hotline) and **"irc\_tls\_port"** (IRC).
 * **Hotline**
-When using a Hotline client, you can connect to the server as "Guest" by using a username of "guest" and no password. Guest access is fairly limited, and this is only useful to test your server. You **will** need to login as "admin" using a default password of "adminpass" and immediately change the admin password to a pass of your choice, or delete the admin account (after creating another privileged account of course). Until you do, anyone can take control of the server, and **phxd** logs a warning at every start.
+When using a Hotline client, you can connect to the server as "Guest" by using a username of "guest" and no password. Guest access is fairly limited, and this is only useful to test your server. The initial database has an "admin" account with the password "adminpass"; since anyone could use it, **phxd** replaces that password with a random one on its first start and shows it once in its log (`docker logs phxd`): look for "SECURITY: the 'admin' account had the default password". Log in as "admin" with it and change it to a password of your choice, or delete the admin account (after creating another privileged account of course).
 * **IRC**
 When using an IRC client, you **must** log in, either as **"guest"** or as any other User (e.g. **"admin"**), in order to access any functionality of the server. Any of the following works:
 

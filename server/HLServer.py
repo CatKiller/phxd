@@ -459,22 +459,33 @@ class HLServer( Factory ):
             self.log.info( "Listening for TLS file transfers on port %d" , hotlinePort + 1 )
         return contextFactory
 
-    def warnDefaultAdmin( self ):
-        """ Warns loudly if the "admin" account still has the default
-        password from the initial database ("adminpass"): anyone who knows
-        it (it is in the README) has full control of the server. Returns
-        True if so. """
+    def secureDefaultAdmin( self ):
+        """ If the "admin" account still has the default password from the
+        initial database ("adminpass", published in the README), anyone
+        could take full control of the server: replace it with a random
+        password, shown once in the log. Returns the new password, or None
+        if nothing needed doing. """
         from hashlib import md5
+        import secrets
         try:
             acct = self.database.loadAccount( "admin" )
         except Exception:
-            return False
-        if ( acct is not None ) and ( acct.password == md5( b"adminpass" ).hexdigest() ):
-            for _ in range( 3 ):
-                self.log.warning( "SECURITY: the 'admin' account still has the default password 'adminpass'. "
-                                  "Log in and change it now (or delete the account)." )
-            return True
-        return False
+            return None
+        if ( acct is None ) or ( acct.password != md5( b"adminpass" ).hexdigest() ):
+            return None
+        password = secrets.token_urlsafe( 12 )
+        acct.password = md5( password.encode( 'ascii' ) ).hexdigest()
+        try:
+            saved = self.database.saveAccount( acct ) is not False
+        except Exception:
+            saved = False
+        if not saved:
+            self.log.warning( "SECURITY: the 'admin' account still has the default password 'adminpass' "
+                              "and it could not be replaced. Log in and change it now (or delete the account)." )
+            return None
+        self.log.warning( "SECURITY: the 'admin' account had the default password 'adminpass', which anyone "
+                          "could use. Its password is now: %s  (log in and change it to one of your choice)" , password )
+        return password
 
     def _ensureFileRoot( self ):
         """ Creates the shared files directory if it is missing; otherwise

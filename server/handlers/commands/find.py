@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 from shared.HLProtocol import *
+from config import SHOW_DOTFILES
 import os
 
 FIND_MAX_ENTRIES = 20000
@@ -17,6 +18,10 @@ def handle( server , user , arg , ref ):
             if not user.hasPriv( PRIV_VIEW_DROPBOXES ):
                 # Don't search (or reveal the contents of) drop boxes.
                 dirs[:] = [ d for d in dirs if "DROP BOX" not in d.upper() ]
+            if not SHOW_DOTFILES:
+                # Nor hidden files and folders.
+                dirs[:] = [ d for d in dirs if not d.startswith( "." ) ]
+                files = [ f for f in files if not f.startswith( "." ) ]
             entries = [ ( "+ " , name ) for name in dirs ] + [ ( "- " , name ) for name in files ]
             for ( prefix , name ) in entries:
                 visited += 1

@@ -37,6 +37,10 @@ def _checkName( part ):
     # and would let names forge lines in the server's logs.
     if CONTROL_CHARS.search( part ):
         raise HLException( "Invalid file or folder name." )
+    # Hidden files are not just left out of listings: they can't be
+    # reached at all (they may be .env files, .git folders, ...).
+    if ( not SHOW_DOTFILES ) and part.startswith( "." ):
+        raise HLException( "Invalid file or folder name." )
 
 def relativeParts( dir , file = None ):
     """ Returns the validated path components (str) for a directory part
