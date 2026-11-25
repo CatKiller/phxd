@@ -9,6 +9,7 @@ from shared.HLTransfer import *
 from config import *
 from server.HLTLS import GracefulCloseMixin
 import os
+import secrets
 
 class HLTransferConnection( GracefulCloseMixin , Protocol ):
     #__implements__ = Protocol.__implements__ + ( IProducer , )
@@ -51,6 +52,10 @@ class HLTransferConnection( GracefulCloseMixin , Protocol ):
                 self.buffer = self.buffer[16:]
                 self.gotMagic = True
                 self.info = self.factory.findTransfer( xfid )
+                if ( self.info != None ) and not self.factory.isFromOwner( self.info , self.transport ):
+                    # Only the user who asked for the transfer may run it.
+                    self.factory.server.log.warning( "Transfer %d claimed from a different address, refused" , xfid )
+                    self.info = None
                 if self.info == None:
                     # Invalid xfer ID, kill the connection.
                     self.closeConnection()
@@ -60,8 +65,10 @@ class HLTransferConnection( GracefulCloseMixin , Protocol ):
                             self.info.total = size
                     elif self.info.type == XFER_TYPE_DOWNLOAD:
                         self.transport.registerProducer( self , False )
-                    # Cancel the xfer timeout and start it up.
+                    # Cancel the xfer timeout and start it up. The transfer
+                    # is now taken: nobody else can claim the same ID.
                     self.factory.cancelTimeout( self.info.id )
+                    self.info.claimed = True
                     self.info.start()
                 if len( self.buffer ) > 0:
                     # Recurse for any remaining data with gotMagic = True.
@@ -97,18 +104,40 @@ class HLFileServer (Factory):
         """ Accepts file transfers over TLS on ``port`` too. """
         reactor.listenSSL( port , self , contextFactory )
     
+    def newTransferID( self ):
+        """ Returns an unused, unpredictable transfer ID. IDs used to count
+        up from 1, so anyone could guess the next one and connect to the
+        transfer port first to take over someone else's transfer. """
+        while True:
+            xfid = secrets.randbelow( 0x7FFFFFFF ) + 1
+            if xfid not in self.transfers:
+                self.lastTransferID = xfid
+                return xfid
+
+    def isFromOwner( self , info , transport ):
+        """ True if ``transport`` comes from the address of the user who
+        requested transfer ``info``, and the transfer isn't already taken. """
+        if getattr( info , "claimed" , False ):
+            return False
+        owner = self.server.getUser( info.owner )
+        if owner is None:
+            return False
+        try:
+            host = transport.getPeer().host
+        except Exception:
+            return False
+        return host == owner.ip
+
     def addUpload( self , owner , path ):
         """ Adds an upload to the list of transfers. """
-        self.lastTransferID += 1
-        info = HLUpload( self.lastTransferID , path , owner )
+        info = HLUpload( self.newTransferID() , path , owner )
         self.transfers[self.lastTransferID] = info
         self.timeouts[info.id] = reactor.callLater( XFER_START_TIMEOUT , self.timeoutTransfer , info.id )
         return info
     
     def addDownload( self , owner , path , offset ):
         """ Adds a download to the list of transfers. """
-        self.lastTransferID += 1
-        info = HLDownload( self.lastTransferID , path , owner , offset )
+        info = HLDownload( self.newTransferID() , path , owner , offset )
         self.transfers[self.lastTransferID] = info
         self.timeouts[info.id] = reactor.callLater( XFER_START_TIMEOUT , self.timeoutTransfer , info.id )
         return info
@@ -158,6 +187,6 @@ class HLFileServer (Factory):
     
     def cleanupTransfers( self , owner ):
         """ Removes any transfers owned by owner. Should be called when the user disconnects or is disconnected. """
-        for xfer in self.transfers.values():
+        for xfer in list( self.transfers.values() ):
             if xfer.owner == owner:
                 self.removeTransfer( xfer.id )

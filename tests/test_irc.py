@@ -159,14 +159,14 @@ class TestLogin:
         client = irc_server.irc_client()
         client.register("eve")
         client.send("PRIVMSG NickServ :IDENTIFY tester nope")
-        assert ":NickServ!NickServ@services NOTICE eve :Login failed: Password is incorrect." in client.take()
+        assert ":NickServ!NickServ@services NOTICE eve :Login failed: Login or password is incorrect." in client.take()
         assert client.closed
 
     def test_unknown_account_is_reported(self, irc_server):
         client = irc_server.irc_client()
         client.register("eve")
         client.send("PRIVMSG NickServ :IDENTIFY nobody pw")
-        assert any("Login failed: Login is incorrect." in line for line in client.take())
+        assert any("Login failed: Login or password is incorrect." in line for line in client.take())
 
     def test_nickserv_help_shows_usage(self, irc_server):
         client = irc_server.irc_client()
@@ -233,7 +233,7 @@ class TestAutoGuest:
         client = irc_server.irc_client()
         client.register("alice")
         irc_server.clock.advance(6)
-        assert any("Guest login failed: Password is incorrect." in line for line in client.take())
+        assert any("Guest login failed: Login or password is incorrect." in line for line in client.take())
         assert not client.closed
 
     def test_disabled_with_zero_delay(self, irc_server, monkeypatch):
@@ -243,7 +243,9 @@ class TestAutoGuest:
         client = irc_server.irc_client()
         lines = client.register("alice")
         assert any("/msg loginserv guest" in line for line in lines)
-        irc_server.clock.advance(60)
+        # Well past the guest delay, but before LOGIN_TIMEOUT drops the
+        # connection.
+        irc_server.clock.advance(30)
         assert not client.user.isLoggedIn()
 
     def test_timer_cancelled_on_disconnect(self, irc_server):
@@ -276,7 +278,7 @@ class TestCaseInsensitiveLogin:
             )
         client = irc_server.irc_client()
         lines = client.register("Dup", "PRIVMSG NickServ :IDENTIFY pw")
-        assert any("Login failed: Login is incorrect." in line for line in lines)
+        assert any("Login failed: Login or password is incorrect." in line for line in lines)
         exact = irc_server.irc_client()
         exact.register("DUP", "PRIVMSG NickServ :IDENTIFY pw")
         assert account_of(exact) == "DUP"
@@ -310,7 +312,8 @@ class TestNickConversion:
 
     def test_hotline_user_join_shows_full_nick(self, irc_server):
         watcher, hl = self._hotline_user_joins(irc_server)
-        assert f":{hl.uid}_Cat`Killer!~{hl.uid}_Cat`Killer@127.0.0.1 JOIN :#public" in watcher.take()
+        # The watcher (guest) may not see other users' IP addresses.
+        assert f":{hl.uid}_Cat`Killer!~{hl.uid}_Cat`Killer@hidden JOIN :#public" in watcher.take()
 
     def test_hotline_chat_sender_is_valid_nick(self, irc_server):
         from shared.HLProtocol import DATA_STRING, HTLC_HDR_CHAT
@@ -350,7 +353,7 @@ class TestNickConversion:
         packet.addNumber(DATA_UID, hl.uid)
         packet.addString(DATA_NICK, "Cat'Killer")
         data = packet.flatten(watcher.user)
-        assert data == f":{hl.uid}_Cat`Killer!~{hl.uid}_Cat`Killer@127.0.0.1 JOIN :#3\r\n".encode()
+        assert data == f":{hl.uid}_Cat`Killer!~{hl.uid}_Cat`Killer@hidden JOIN :#3\r\n".encode()
 
 
 class TestKeepaliveReplies:

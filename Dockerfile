@@ -1,4 +1,4 @@
-FROM python:3.12.0-slim-bookworm
+FROM python:3.12-slim-bookworm
 WORKDIR /app
 
 # Disable stdout/stderr buffering so ``docker logs`` shows server output

@@ -7,6 +7,9 @@ def handle( server , user , arg , ref ):
         pre = len( user.account.fileRoot )
         matches = []
         for ( root , dirs , files ) in os.walk( user.account.fileRoot ):
+            if not user.hasPriv( PRIV_VIEW_DROPBOXES ):
+                # Don't search (or reveal the contents of) drop boxes.
+                dirs[:] = [ d for d in dirs if "DROP BOX" not in d.upper() ]
             for name in dirs:
                 if arg.upper() in name.upper():
                     matches.append( "+ " + os.path.join( root , name )[pre:] )

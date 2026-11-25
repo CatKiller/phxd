@@ -3,7 +3,10 @@ from shared.HLProtocol import *
 from shared.HLTypes import *
 from shared.HLUtils import *
 from config import *
-import os , time
+import importlib , os , re , time
+
+# Chat command names map to modules in server/handlers/commands.
+COMMAND_NAME = re.compile( r'^[A-Za-z0-9_]+$' )
 
 def installHandler( server ):
     server.registerPacketHandler( ChatHandler() )
@@ -16,20 +19,25 @@ def dispatchCommand( server , user , line , ref ):
         args = ""
         if len( parts ) > 1:
             args = parts[1]
+        if not COMMAND_NAME.match( cmd ):
+            return False
         try:
-            mod = __import__( "server.handlers.commands.%s" % cmd , None , None , "server.handlers.commands" )
+            mod = importlib.import_module( "server.handlers.commands.%s" % cmd )
+        except ImportError:
+            mod = None
+        if mod is not None:
             handler = getattr( mod , "handle" )
             handler( server , user , args , ref )
             return True
-        except ImportError:
-            #Default handler is server exec kang
-            ret = shell_exec( user, cmd, args )
-            if( ret == None ):
-                return False
-            chat = HLPacket( HTLS_HDR_CHAT )
-            chat.addString( DATA_STRING, ret )
-            server.sendPacket( user.uid, chat )
-            return True
+        # Otherwise, a server-side script from support/exec, if there is
+        # one with that name.
+        ret = shell_exec( user , cmd , args )
+        if ret == None:
+            return False
+        chat = HLPacket( HTLS_HDR_CHAT )
+        chat.addString( DATA_STRING , ret )
+        server.sendPacket( user.uid , chat )
+        return True
     return False
 
 def logChat( chat , user ):
@@ -237,7 +245,7 @@ class ChatHandler( HLPacketHandler ):
         ref = packet.getNumber( DATA_CHATID , 0 )
         sub = packet.getString( DATA_SUBJECT , "" )
         chat = server.getChat( ref )
-        if chat != None:
+        if ( chat != None ) and chat.hasUser( user ):
             subject = HLPacket( HTLS_HDR_CHAT_SUBJECT )
             subject.addInt32( DATA_CHATID , ref )
             subject.addString( DATA_SUBJECT , sub )

@@ -1,0 +1,423 @@
+"""Regression tests for the security fixes: chat commands never reach a
+shell, file paths stay inside the file root, privileged chat commands check
+privileges, transfers can't be claimed by others, abuse limits, and IRC
+output can't be forged."""
+from __future__ import annotations
+
+import os
+import stat
+import struct
+
+import pytest
+
+from shared.HLProtocol import (
+    DATA_CHATID,
+    DATA_DIR,
+    DATA_FILENAME,
+    DATA_NICK,
+    DATA_OPTION,
+    DATA_STRING,
+    DATA_XFERID,
+    HTLC_HDR_CHAT,
+    HTLC_HDR_FILE_GET,
+    HTLC_HDR_FILE_GETINFO,
+    HTLC_HDR_FILE_LIST,
+    HTLC_HDR_USER_CHANGE,
+    HTLS_HDR_TASK,
+    PRIV_DOWNLOAD_FILES,
+    PRIV_KICK_USERS,
+    PRIV_SEND_CHAT,
+    PRIV_USE_ANY_NAME,
+    STATUS_ADMIN,
+    cleanNick,
+    ircText,
+)
+from shared.HLTypes import HLException
+from tests.conftest import make_account
+from tests.irc_harness import irc_server  # noqa: F401  (fixture)
+
+
+def dir_object(*parts):
+    """A DATA_DIR payload: count, then (2-byte reserved, 1-byte len, name)."""
+    data = struct.pack("!H", len(parts))
+    for part in parts:
+        raw = part.encode("mac-roman")
+        data += b"\0\0" + struct.pack("!B", len(raw)) + raw
+    return data
+
+
+def errors(client):
+    """The DATA_ERROR texts of the TASK replies received since last call."""
+    from shared.HLProtocol import DATA_ERROR, HLPacket
+
+    data = client.transport.data[client._read :]
+    client._read = len(client.transport.data)
+    out = []
+    pos = 0
+    while pos + 20 <= len(data):
+        packet = HLPacket()
+        size = packet.parse(data[pos:])
+        if size <= 0:
+            break
+        if packet.type == HTLS_HDR_TASK and packet.flags == 1:
+            out.append(packet.getString(DATA_ERROR, ""))
+        pos += size
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Chat commands and server-side scripts
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def exec_dir(tmp_path, monkeypatch):
+    """A support/exec directory holding an ``echoargs`` script."""
+    import shared.HLUtils as utils
+
+    d = tmp_path / "exec"
+    d.mkdir()
+    script = d / "echoargs"
+    script.write_text('#!/bin/sh\nfor a in "$@"; do printf "[%s]" "$a"; done\n')
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setattr(utils, "EXEC_DIR", str(d))
+    return d
+
+
+class TestServerScripts:
+    def test_arguments_are_not_interpreted_by_a_shell(self, irc_server, exec_dir, tmp_path):
+        from shared.HLUtils import shell_exec
+
+        client = irc_server.hotline_client()
+        client.login("guest", "", "eve")
+        marker = tmp_path / "marker"
+        out = shell_exec(client.user, "echoargs", f"a;touch {marker} $(id)")
+        assert out == f"[a;touch][{marker}][$(id)]"
+        assert not marker.exists()
+
+    @pytest.mark.parametrize("name", ["echoargs;id", "../echoargs", "echoargs ", "", "nope", "a/b"])
+    def test_only_existing_scripts_by_plain_name_run(self, irc_server, exec_dir, name):
+        from shared.HLUtils import shell_exec
+
+        client = irc_server.hotline_client()
+        client.login("guest", "", "eve")
+        assert shell_exec(client.user, name, "") is None
+
+    def test_unknown_chat_command_is_sent_as_chat(self, irc_server, exec_dir, tmp_path):
+        watcher = irc_server.hotline_client()
+        watcher.login("guest", "", "watcher")
+        client = irc_server.hotline_client()
+        client.login("guest", "", "eve")
+        watcher.replies()
+        marker = tmp_path / "marker2"
+        client.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, f"/;touch {marker}")])
+        assert not marker.exists()
+        # Not a command, so it went to public chat like any other line.
+        assert f"touch {marker}".encode("mac-roman") in watcher.transport.data
+
+
+# ---------------------------------------------------------------------------
+# File paths
+# ---------------------------------------------------------------------------
+
+
+class TestBuildPath:
+    @pytest.mark.parametrize(
+        "dirs, name",
+        [
+            ([], "../secret"),
+            ([], ".."),
+            ([], "a/../../secret"),
+            (["../.."], "secret"),
+            (["sub", ".."], "x"),
+            (["a/b"], "x"),
+            (["."], "x"),
+            ([], "x\0y"),
+        ],
+    )
+    def test_rejects_escapes(self, tmp_path, dirs, name):
+        from server.handlers.FileHandler import buildPath
+
+        with pytest.raises(HLException):
+            buildPath(str(tmp_path / "files"), dirs, name)
+
+    def test_accepts_ordinary_names(self, tmp_path):
+        from server.handlers.FileHandler import buildPath
+
+        root = str(tmp_path / "files")
+        assert buildPath(root, ["Uploads", "", "My Folder"], "file..name.txt") == os.sep.join(
+            [root, "Uploads", "My Folder", "file..name.txt"]
+        )
+        assert buildPath(root, []) == root
+
+
+@pytest.fixture
+def file_root(irc_server, tmp_path):
+    root = tmp_path / "files"
+    (root / "Uploads").mkdir(parents=True)
+    (root / "Drop Box").mkdir()
+    (root / "Drop Box" / "private.txt").write_text("private")
+    (root / "public.txt").write_text("public")
+    (tmp_path / "outside.txt").write_text("outside")
+    for acct in irc_server.database.accounts:
+        acct.fileRoot = str(root)
+    return root
+
+
+class TestFileHandlers:
+    def test_listing_outside_the_root_is_refused(self, irc_server, file_root):
+        client = irc_server.hotline_client()
+        client.login("guest", "", "eve")
+        errors(client)
+        client.send_packet(HTLC_HDR_FILE_LIST, [(DATA_DIR, dir_object(".."))])
+        client.send_packet(HTLC_HDR_FILE_LIST, [(DATA_DIR, dir_object("../.."))])
+        assert errors(client) == ["Invalid file or folder name."] * 2
+        assert b"outside.txt" not in client.transport.data
+
+    def test_download_outside_the_root_is_refused(self, irc_server, file_root):
+        guest = next(a for a in irc_server.database.accounts if a.login == "guest")
+        guest.privs |= PRIV_DOWNLOAD_FILES
+        client = irc_server.hotline_client()
+        client.login("guest", "", "eve")
+        errors(client)
+        client.send_packet(HTLC_HDR_FILE_GET, [(DATA_FILENAME, "../outside.txt")])
+        assert errors(client) == ["Invalid file or folder name."]
+        assert irc_server.server.fileserver.transfers == {}
+
+    def test_drop_box_contents_are_hidden(self, irc_server, file_root):
+        guest = next(a for a in irc_server.database.accounts if a.login == "guest")
+        guest.privs |= PRIV_DOWNLOAD_FILES
+        client = irc_server.hotline_client()
+        client.login("guest", "", "eve")
+        errors(client)
+        client.send_packet(HTLC_HDR_FILE_GET, [(DATA_DIR, dir_object("Drop Box")), (DATA_FILENAME, "private.txt")])
+        client.send_packet(HTLC_HDR_FILE_GETINFO, [(DATA_DIR, dir_object("Drop Box")), (DATA_FILENAME, "private.txt")])
+        assert errors(client) == ["You are not allowed to view drop boxes."] * 2
+
+
+# ---------------------------------------------------------------------------
+# Privileged chat commands
+# ---------------------------------------------------------------------------
+
+
+class TestChatCommands:
+    def test_0wn_needs_kick_privilege(self, irc_server):
+        victim = irc_server.hotline_client()
+        victim.login("guest", "", "victim")
+        attacker = irc_server.hotline_client()
+        attacker.login("guest", "", "eve")
+        attacker.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, f"/0wn {victim.uid} name pwned")])
+        assert victim.user.nick == "victim"
+
+    def test_0wn_works_for_moderators(self, irc_server):
+        irc_server.database.accounts.append(
+            make_account(login="mod", name="Mod", password="d41d8cd98f00b204e9800998ecf8427e",
+                         privs=PRIV_KICK_USERS | PRIV_SEND_CHAT | PRIV_USE_ANY_NAME)
+        )
+        victim = irc_server.hotline_client()
+        victim.login("guest", "", "victim")
+        mod = irc_server.hotline_client()
+        mod.login("mod", "", "mod")
+        mod.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, f"/0wn {victim.uid} name renamed")])
+        assert victim.user.nick == "renamed"
+
+    def test_color_cannot_set_admin_flag(self, irc_server):
+        client = irc_server.hotline_client()
+        client.login("guest", "", "eve")
+        client.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "/color %d" % (STATUS_ADMIN | 4))])
+        assert client.user.status & STATUS_ADMIN == 0
+        assert client.user.status & 4
+
+
+# ---------------------------------------------------------------------------
+# Server linking
+# ---------------------------------------------------------------------------
+
+
+def test_link_port_only_listens_when_enabled(monkeypatch):
+    from twisted.internet import reactor
+
+    import server.HLServerLinkage as linkage
+
+    calls = []
+    monkeypatch.setattr(reactor, "listenTCP", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(linkage, "ENABLE_SERVER_LINKING", False)
+    linkage.HLServerLinker(object())
+    assert calls == []
+    monkeypatch.setattr(linkage, "ENABLE_SERVER_LINKING", True)
+    linkage.HLServerLinker(object())
+    assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# File transfers
+# ---------------------------------------------------------------------------
+
+
+class FakeXferTransport:
+    def __init__(self, host):
+        self.host = host
+        self.closed = False
+        self.producer = None
+
+    def getPeer(self):
+        class Peer:
+            pass
+
+        peer = Peer()
+        peer.host = self.host
+        return peer
+
+    def loseConnection(self):
+        self.closed = True
+
+    def registerProducer(self, producer, streaming):
+        self.producer = producer
+
+    def write(self, data):
+        pass
+
+
+class TestTransfers:
+    def _download(self, irc_server, file_root):
+        guest = next(a for a in irc_server.database.accounts if a.login == "guest")
+        guest.privs |= PRIV_DOWNLOAD_FILES
+        client = irc_server.hotline_client(host="10.0.0.1")
+        client.login("guest", "", "alice")
+        client.send_packet(HTLC_HDR_FILE_GET, [(DATA_FILENAME, "public.txt")])
+        (xfer,) = irc_server.server.fileserver.transfers.values()
+        return xfer
+
+    def _connect(self, irc_server, host, xfid):
+        from server.HLFileServer import HLTransferConnection
+
+        conn = HLTransferConnection()
+        conn.factory = irc_server.server.fileserver
+        conn.makeConnection(FakeXferTransport(host))
+        conn.dataReceived(struct.pack("!4L", 0x48545846, xfid, 0, 0))
+        return conn
+
+    def test_ids_are_not_sequential(self, irc_server):
+        fs = irc_server.server.fileserver
+        ids = {fs.newTransferID() for _ in range(50)}
+        assert len(ids) == 50
+        assert ids != set(range(min(ids), min(ids) + 50))
+
+    def test_other_address_cannot_claim_transfer(self, irc_server, file_root):
+        xfer = self._download(irc_server, file_root)
+        thief = self._connect(irc_server, "10.6.6.6", xfer.id)
+        assert thief.transport.closed
+        assert thief.transport.producer is None
+        owner = self._connect(irc_server, "10.0.0.1", xfer.id)
+        assert owner.transport.producer is owner
+
+    def test_transfer_cannot_be_claimed_twice(self, irc_server, file_root):
+        xfer = self._download(irc_server, file_root)
+        self._connect(irc_server, "10.0.0.1", xfer.id)
+        second = self._connect(irc_server, "10.0.0.1", xfer.id)
+        assert second.transport.closed
+        assert second.transport.producer is None
+
+
+# ---------------------------------------------------------------------------
+# Abuse limits
+# ---------------------------------------------------------------------------
+
+
+class TestLimits:
+    def test_oversized_packet_closes_connection(self, irc_server):
+        client = irc_server.hotline_client()
+        client.conn.dataReceived(struct.pack("!5L", HTLC_HDR_CHAT, 1, 0, 0xFFFFFFF0, 0xFFFFFFF0))
+        assert client.closed
+
+    def test_overlong_irc_line_closes_connection(self, irc_server):
+        client = irc_server.irc_client()
+        client.register("alice")
+        client.send_raw(b"PRIVMSG #public :" + b"x" * 20000)
+        assert client.closed
+
+    def test_handshake_without_registration_is_bounded(self, irc_server):
+        client = irc_server.irc_client()
+        client.send_raw(b"CAP LS\r\n" * 2000)
+        assert client.closed
+
+    def test_irc_lines_split_across_writes(self, irc_server):
+        client = irc_server.irc_client()
+        client.register("alice")
+        client.send_raw(b"PRIVMSG loginserv gu")
+        client.send_raw(b"est\r\n")
+        assert client.user.isLoggedIn()
+
+    def test_login_timeout(self, irc_server):
+        client = irc_server.hotline_client()
+        irc_server.clock.advance(61)
+        assert client.closed
+
+    def test_logged_in_users_are_not_timed_out(self, irc_server):
+        client = irc_server.hotline_client()
+        client.login("guest", "", "alice")
+        irc_server.clock.advance(61)
+        assert not client.closed
+
+    def test_repeated_failed_logins_ban_the_address(self, irc_server):
+        for _ in range(5):
+            client = irc_server.hotline_client(host="10.9.9.9")
+            client.login("tester", "wrong")
+            assert client.closed
+        client = irc_server.hotline_client(host="10.9.9.9")
+        client.login("tester", "s3cret")
+        assert not client.user or not client.user.isLoggedIn()
+        assert errors(client) == ["You are banned: Too many failed logins."]
+        # Other addresses are unaffected.
+        other = irc_server.hotline_client(host="10.1.1.1")
+        other.login("tester", "s3cret")
+        assert other.user.isLoggedIn()
+
+    def test_connections_per_address_are_limited(self, irc_server):
+        clients = [irc_server.irc_client(host="10.2.2.2") for _ in range(11)]
+        assert [c.closed for c in clients] == [False] * 10 + [True]
+
+    def test_failed_login_does_not_keep_account(self, irc_server):
+        client = irc_server.irc_client()
+        client.register("alice")
+        client.send("PRIVMSG loginserv tester wrong")
+        user = irc_server.server.getUser(client.uid)
+        assert user is None or user.account is None
+
+
+# ---------------------------------------------------------------------------
+# Nicknames and IRC output
+# ---------------------------------------------------------------------------
+
+
+class TestIRCOutput:
+    def test_clean_nick_and_irc_text(self):
+        assert cleanNick("a\r\nPRIVMSG x\tb\0") == "aPRIVMSG xb"
+        assert ircText("a\r\nb\0") == "a  b"
+
+    def test_hotline_nick_cannot_inject_irc_lines(self, irc_server):
+        from tests.test_irc import logged_in_irc_client
+
+        watcher = logged_in_irc_client(irc_server)
+        hl = irc_server.hotline_client()
+        hl.login("guest", "", "eve")
+        watcher.take()
+        evil = "x\r\n:admin PRIVMSG #public :forged"
+        hl.send_packet(HTLC_HDR_USER_CHANGE, [(DATA_NICK, evil)])
+        # A second change keeping the same nick is shown as a status change
+        # notice, which used to print the raw nick.
+        hl.send_packet(HTLC_HDR_USER_CHANGE, [(DATA_NICK, evil)])
+        hl.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "hi")])
+        for line in watcher.take():
+            assert not line.startswith(":admin")
+
+    def test_who_hides_other_addresses(self, irc_server):
+        from tests.test_irc import logged_in_irc_client
+
+        watcher = logged_in_irc_client(irc_server)
+        hl = irc_server.hotline_client(host="10.3.3.3")
+        hl.login("guest", "", "eve")
+        watcher.take()
+        watcher.send("WHO #public")
+        text = "\n".join(watcher.take())
+        assert "10.3.3.3" not in text

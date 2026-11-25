@@ -77,6 +77,10 @@ class HLConnection( GracefulCloseMixin , Protocol ):
         self.capReplied = False
         self.guestTimer = None
         self.idleTimer = reactor.callLater( IDLE_TIME , self.idleCheck )
+        # Connections that never log in are dropped after LOGIN_TIMEOUT.
+        self.loginTimer = None
+        if LOGIN_TIMEOUT > 0:
+            self.loginTimer = reactor.callLater( LOGIN_TIMEOUT , self.loginTimeoutCheck )
         try:
             sock = findSocket( self.transport )
             if sock is not None:
@@ -88,6 +92,10 @@ class HLConnection( GracefulCloseMixin , Protocol ):
             self.factory.log.info( "Client connected: %s:%s (connID=%d)" , peer.host , peer.port , self.connID )
         except Exception:
             pass
+        user = self.factory.getUser( self.connID )
+        if ( user is not None ) and self.factory.tooManyConnections( user.ip ):
+            self.factory.log.warning( "Too many connections from %s, refusing connID=%d" , user.ip , self.connID )
+            self.closeConnection()
 
     def connectionLost( self , reason ):
         """ Called when the connection is lost. """
@@ -96,6 +104,8 @@ class HLConnection( GracefulCloseMixin , Protocol ):
             self.idleTimer.cancel()
         if ( self.guestTimer != None ) and self.guestTimer.active():
             self.guestTimer.cancel()
+        if ( self.loginTimer != None ) and self.loginTimer.active():
+            self.loginTimer.cancel()
         try:
             self.factory.log.info( "Client disconnected (connID=%d): %s" , self.connID , reason.getErrorMessage() if hasattr( reason , 'getErrorMessage' ) else reason )
         except Exception:
@@ -127,22 +137,52 @@ class HLConnection( GracefulCloseMixin , Protocol ):
             done = False
             while not done:
                 if self.isIRC:
-                    # Buffer is ``bytes`` from Twisted's ``dataReceived``;
-                    # strip CR with a bytes literal.
-                    self.buffer = self.buffer.replace(b"\r", b"") #FIXME is it really necessary ? it is also done during packet parsing
+                    # One complete line at a time; a line (or a partial
+                    # one) longer than MAX_IRC_LINE closes the connection
+                    # rather than buffering without limit.
+                    end = self.buffer.find( b"\n" )
+                    if end < 0:
+                        if len( self.buffer ) > MAX_IRC_LINE:
+                            self.factory.log.warning( "IRC line too long from connID=%d, closing" , self.connID )
+                            self.buffer = b''
+                            self.closeConnection()
+                        return
+                    line = self.buffer[:end].replace( b"\r" , b"" )
+                    self.buffer = self.buffer[end+1:]
+                    if len( line ) > MAX_IRC_LINE:
+                        self.factory.log.warning( "IRC line too long from connID=%d, closing" , self.connID )
+                        self.buffer = b''
+                        self.closeConnection()
+                        return
+                    if not line:
+                        continue
                     self.packet.isIRC = self.isIRC
                     self.packet.connID = self.connID
                     self.packet.server = self.factory
+                    self.packet.parse( line )
+                    self.handlePacket()
+                    self.packet = HLPacket()
+                    continue
+                if len( self.buffer ) >= 20:
+                    size = unpack( "!L" , self.buffer[12:16] )[0]
+                    if size > MAX_PACKET_SIZE:
+                        self.factory.log.warning( "Oversized packet (%d bytes) from connID=%d, closing" , size , self.connID )
+                        self.buffer = b''
+                        self.closeConnection()
+                        return
                 size = self.packet.parse( self.buffer )
                 if size > 0:
-                    if self.isIRC:
-                        size = size + 1
                     self.buffer = self.buffer[size:]
                     self.handlePacket()
                     self.packet = HLPacket()
                 else:
                     done = True
         else:
+            if len( self.buffer ) > MAX_IRC_LINE:
+                # Still no Hotline magic or IRC registration: not a client.
+                self.buffer = b''
+                self.closeConnection()
+                return
             if len( self.buffer ) >= 12:
                 ( proto , subProto , vers , subVers ) = unpack( "!LLHH" , self.buffer[0:12] )
                 if proto == HLCharConst( "TRTP" ):
@@ -323,10 +363,18 @@ class HLConnection( GracefulCloseMixin , Protocol ):
             self.factory.log.exception( "Unhandled error in handlePacket (connID=%d)" , self.connID )
             self.closeConnection()
     
+    def loginTimeoutCheck( self ):
+        """ Closes the connection if it still hasn't logged in. """
+        self.loginTimer = None
+        user = self.factory.getUser( self.connID )
+        if ( user is None ) or ( not user.isLoggedIn() ):
+            self.factory.log.info( "Login timeout (connID=%d), closing" , self.connID )
+            self.closeConnection()
+
     def idleCheck( self ):
         """ Called a set amount of time after the last non-ping packet, mark us as idle and trick the handlers into sending the change. """
         user = self.factory.getUser( self.connID )
-        if not user.away:
+        if ( user is not None ) and user.isLoggedIn() and not user.away:
             # Only send the change if the user is not away and not idle.
             user.status |= STATUS_AWAY
             self.factory.dispatchPacket( self.connID , HLPacket(HTLC_HDR_USER_CHANGE ) )
@@ -359,6 +407,8 @@ class HLServer( Factory ):
         self.chats = {}
         self.handlers = []
         self.tempBans = {}
+        # Recent failed login times, per IP address.
+        self.loginFailures = {}
         self.database = getDatabase( DB_TYPE )
         self.fileserver = HLFileServer( self )
         self.webserver = HLWebServices( self )
@@ -400,6 +450,23 @@ class HLServer( Factory ):
             self.fileserver.listenTLS( hotlinePort + 1 , contextFactory )
             self.log.info( "Listening for TLS file transfers on port %d" , hotlinePort + 1 )
         return contextFactory
+
+    def warnDefaultAdmin( self ):
+        """ Warns loudly if the "admin" account still has the default
+        password from the initial database ("adminpass"): anyone who knows
+        it (it is in the README) has full control of the server. Returns
+        True if so. """
+        from hashlib import md5
+        try:
+            acct = self.database.loadAccount( "admin" )
+        except Exception:
+            return False
+        if ( acct is not None ) and ( acct.password == md5( b"adminpass" ).hexdigest() ):
+            for _ in range( 3 ):
+                self.log.warning( "SECURITY: the 'admin' account still has the default password 'adminpass'. "
+                                  "Log in and change it now (or delete the account)." )
+            return True
+        return False
 
     def _ensureFileRoot( self ):
         """ Creates the shared files directory if it is missing; otherwise
@@ -557,6 +624,30 @@ class HLServer( Factory ):
         if addr in self.tempBans:
             del self.tempBans[addr]
     
+    def recordLoginFailure( self , addr ):
+        """ Counts a failed login from addr, and bans addr for BAN_TIME once
+        it has failed MAX_LOGIN_FAILURES times in LOGIN_FAILURE_WINDOW. """
+        if MAX_LOGIN_FAILURES <= 0:
+            return
+        now = time.time()
+        recent = [ t for t in self.loginFailures.get( addr , [] ) if now - t < LOGIN_FAILURE_WINDOW ]
+        recent.append( now )
+        self.loginFailures[addr] = recent
+        # Forget addresses whose failures have all expired.
+        for other in [ a for a , times in self.loginFailures.items() if now - times[-1] >= LOGIN_FAILURE_WINDOW ]:
+            del self.loginFailures[other]
+        if len( recent ) >= MAX_LOGIN_FAILURES:
+            self.log.warning( "Banning %s for %d seconds after %d failed logins" , addr , BAN_TIME , len( recent ) )
+            self.addTempBan( addr , "Too many failed logins." )
+            self.loginFailures.pop( addr , None )
+
+    def tooManyConnections( self , addr ):
+        """ True if addr has more than MAX_CONNECTIONS_PER_IP connections. """
+        if MAX_CONNECTIONS_PER_IP <= 0:
+            return False
+        count = len( [ u for ( c , u ) in self.clients.values() if u.local and u.ip == addr ] )
+        return count > MAX_CONNECTIONS_PER_IP
+
     def checkForBan( self , addr ):
         """ Returns the reason given for a ban, if it exists. Otherwise returns None. """
         if addr in self.tempBans:

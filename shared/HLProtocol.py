@@ -35,6 +35,27 @@ try:
 except NameError:
     TLS_CERT = ""
     TLS_KEY = ""
+try:
+    LOGIN_TIMEOUT
+except NameError:
+    LOGIN_TIMEOUT = 60
+try:
+    MAX_CONNECTIONS_PER_IP
+except NameError:
+    MAX_CONNECTIONS_PER_IP = 10
+try:
+    MAX_LOGIN_FAILURES
+except NameError:
+    MAX_LOGIN_FAILURES = 5
+    LOGIN_FAILURE_WINDOW = 5 * 60
+try:
+    MAX_PACKET_SIZE
+except NameError:
+    MAX_PACKET_SIZE = 1024 * 1024
+try:
+    MAX_IRC_LINE
+except NameError:
+    MAX_IRC_LINE = 8192
 
 # Source prefix for notices from the (virtual) NickServ service.
 NICKSERV_PREFIX = ":NickServ!NickServ@services"
@@ -70,6 +91,25 @@ def ircSafeNick( nick ):
         nick = nick.decode( 'mac-roman' )
     nick = ( nick or "" ).replace( "'" , "`" )
     return IRC_NICK_INVALID.sub( "" , nick )
+
+CONTROL_CHARS = re.compile( r'[\x00-\x1f\x7f]' )
+
+def cleanNick( nick ):
+    """ Removes control characters (CR, LF, tab, NUL, ...) from a nickname:
+    they have no place in one, and would let a nick inject lines into IRC
+    output or break the tab-separated text database. """
+    if isinstance( nick , (bytes , bytearray) ):
+        nick = nick.decode( 'mac-roman' )
+    return CONTROL_CHARS.sub( "" , nick or "" )
+
+def ircText( text ):
+    """ Makes text safe to put inside a single IRC line: CR and LF would
+    end the line and start a new (forged) one, NUL is forbidden. """
+    if text is None:
+        return ""
+    if isinstance( text , (bytes , bytearray) ):
+        text = text.decode( 'mac-roman' )
+    return str( text ).replace( "\r" , " " ).replace( "\n" , " " ).replace( "\0" , "" )
 
 def ircNick( uid , nick ):
     """ Returns the IRC nickname of a user: <uid>_<sanitized nick>. """
@@ -523,6 +563,14 @@ class HLPacket:
                 return bytes( obj.data )
         return default
     
+    def _ircHost( self , viewer , u ):
+        """ The host part of ``u``'s IRC hostmask as shown to ``viewer``:
+        IP addresses are only shown to users allowed to see user info (as
+        for Hotline clients) and to the user themselves. """
+        if ( viewer is not None ) and ( viewer.uid == u.uid or viewer.hasPriv( PRIV_USER_INFO ) ):
+            return ircText( u.ip )
+        return "hidden"
+
     def flatten( self , user ):
         """ Returns a flattened string of this packet and embedded objects. """
         data = ""
@@ -530,7 +578,7 @@ class HLPacket:
             if self.type == HTLS_HDR_PING:
                 # RFC 2812: PONG <server> :<token from the PING>
                 token = self.getString( DATA_STRING , IRC_SERVER_NAME )
-                data = "PONG "+IRC_SERVER_NAME+" :"+token+"\r\n"
+                data = "PONG "+IRC_SERVER_NAME+" :"+ircText( token )+"\r\n"
             
             elif self.type == HTLS_HDR_CHAT:
                 try:
@@ -551,18 +599,18 @@ class HLPacket:
                     channel = "public"
                 else:
                     channel = str(chatid)
-                data = ":"+mynick+" PRIVMSG #"+channel+" :"+chat[1:]+"\r\n"
+                data = ":"+mynick+" PRIVMSG #"+channel+" :"+ircText( chat[1:] )+"\r\n"
                 
             elif self.type == HTLS_HDR_MSG:
                 chat = self.getString( DATA_STRING )
                 try:
                     ( c , u ) = self.server.clients[self.getNumber( DATA_UID )]
                     mynick = ircCheckUserNick( u )
-                    myip = u.ip
+                    myip = self._ircHost( user , u )
                 except KeyError:
                     mynick = "PHXD"
                     myip = "127.0.0.1"
-                data = ":"+mynick+"!~"+mynick+"@"+myip+" PRIVMSG "+user.nick+" :"+chat.replace( "\r" , " " )+"\r\n"
+                data = ":"+mynick+"!~"+mynick+"@"+myip+" PRIVMSG "+ircText( user.nick )+" :"+ircText( chat )+"\r\n"
             
             elif self.type == HTLS_HDR_USER_LEAVE:
                 ( c, u ) = self.server.clients[self.getNumber( DATA_UID )]
@@ -571,20 +619,21 @@ class HLPacket:
                     proto = "IRC"
                 else:
                     proto = "Hotline"
-                data = ":"+mynick+"!~"+mynick+"@"+u.ip+" PART #public :Client disconnected from "+proto+"\r\n"
+                data = ":"+mynick+"!~"+mynick+"@"+self._ircHost( user , u )+" PART #public :Client disconnected from "+proto+"\r\n"
 
             elif self.type == HTLS_HDR_USER_CHANGE:
                 ( c, u ) = self.server.clients[self.getNumber( DATA_UID )]
                 mynick = ircCheckUserNick( u )
-                oldnick = self.getString( DATA_IRC_OLD_NICK )
+                oldnick = ircText( self.getString( DATA_IRC_OLD_NICK , "" ) )
+                host = self._ircHost( user , u )
                 if not u.valid: # Login ? If so, force join the public channel
-                    data = ":"+mynick+"!~"+mynick+"@"+u.ip+" JOIN :#public\r\n"
+                    data = ":"+mynick+"!~"+mynick+"@"+host+" JOIN :#public\r\n"
                 else:
-                    if u.nick == oldnick:
+                    if ircText( u.nick ) == oldnick:
                         data = "NOTICE *: *** "+oldnick+" changed status to "+str( u.status )+"\r\n"
                     else:
                         if user.uid == u.uid:
-                            data = ":"+oldnick+"!~"+oldnick+"@"+u.ip+" NICK :"+user.nick+"\r\n"
+                            data = ":"+oldnick+"!~"+oldnick+"@"+host+" NICK :"+ircText( user.nick )+"\r\n"
                         else:
                             data = ":"+ircNick( u.uid , oldnick )+" NICK "+ircCheckUserNick( u )+"\r\n"
                         
@@ -597,8 +646,8 @@ class HLPacket:
                         ( c , u ) = self.server.clients[uid]
                         mynick = ircCheckUserNick( u )
                         if u.isLoggedIn():
-                            data += ":"+IRC_SERVER_NAME+" 352 "+mynick+" #public "+mynick+" "+u.ip+" "+IRC_SERVER_NAME+" "+u.account.name.replace( " ", "_" )+"\r\n"
-                    data += ":"+IRC_SERVER_NAME+" 315 "+user.nick+" #public :End of /WHO list.\r\n"
+                            data += ":"+IRC_SERVER_NAME+" 352 "+mynick+" #public "+mynick+" "+self._ircHost( user , u )+" "+IRC_SERVER_NAME+" "+ircText( u.account.name ).replace( " ", "_" )+"\r\n"
+                    data += ":"+IRC_SERVER_NAME+" 315 "+ircText( user.nick )+" #public :End of /WHO list.\r\n"
                 
                 # HTLC_HDR_USER_INFO then :)
                 elif self.getString( DATA_NICK ):
@@ -613,11 +662,12 @@ class HLPacket:
                     else:
                         proto = "Hotline"
                     
-                    data = ":"+IRC_SERVER_NAME+" 311 "+user.nick+" "+mynick+" ~"+mynick+" "+u.ip+" * :"+u.account.name.replace(" ", "_")+"\r\n"
-                    data += ":"+IRC_SERVER_NAME+" 312 "+user.nick+" "+mynick+" "+IRC_SERVER_NAME+" :http//chatonly.org\r\n"
-                    data += ":"+IRC_SERVER_NAME+" 320 "+user.nick+" "+mynick+" :Using protocol "+proto+"\r\n"
-                    data += ":"+IRC_SERVER_NAME+" 317 "+user.nick+" "+mynick+" "+idle+" 0 :seconds idle, signon time\r\n"
-                    data += ":"+IRC_SERVER_NAME+" 318 "+user.nick+" "+mynick+" :End of /WHOIS list.\r\n"
+                    me = ircText( user.nick )
+                    data = ":"+IRC_SERVER_NAME+" 311 "+me+" "+mynick+" ~"+mynick+" "+self._ircHost( user , u )+" * :"+ircText( u.account.name ).replace(" ", "_")+"\r\n"
+                    data += ":"+IRC_SERVER_NAME+" 312 "+me+" "+mynick+" "+IRC_SERVER_NAME+" :http//chatonly.org\r\n"
+                    data += ":"+IRC_SERVER_NAME+" 320 "+me+" "+mynick+" :Using protocol "+proto+"\r\n"
+                    data += ":"+IRC_SERVER_NAME+" 317 "+me+" "+mynick+" "+ircText( idle )+" 0 :seconds idle, signon time\r\n"
+                    data += ":"+IRC_SERVER_NAME+" 318 "+me+" "+mynick+" :End of /WHOIS list.\r\n"
 
             elif self.type == HTLS_HDR_CHAT_INVITE:
                 chatid = self.getNumber( DATA_CHATID)
@@ -630,7 +680,7 @@ class HLPacket:
                 uid = self.getNumber( DATA_UID )
                 ( c , u ) = self.server.clients[uid]
                 mynick = ircCheckUserNick( u )
-                data = ":"+mynick+"!~"+mynick+"@"+u.ip+" PART #"+str( chatid )+" :Client left channel #"+str( chatid )+"\r\n"
+                data = ":"+mynick+"!~"+mynick+"@"+self._ircHost( user , u )+" PART #"+str( chatid )+" :Client left channel #"+str( chatid )+"\r\n"
 
             elif self.type == HTLS_HDR_CHAT_USER_CHANGE:
                 # Basically this is a JOIN packet for a private chat
@@ -638,10 +688,10 @@ class HLPacket:
                 uid = self.getNumber( DATA_UID )
                 ( c , u ) = self.server.clients[uid]
                 mynick = ircNick( uid , self.getString( DATA_NICK , u.nick ) )
-                data = ":"+mynick+"!~"+mynick+"@"+u.ip+" JOIN :#"+str(chatid)+"\r\n"
+                data = ":"+mynick+"!~"+mynick+"@"+self._ircHost( user , u )+" JOIN :#"+str(chatid)+"\r\n"
 
             elif self.type == HTLS_HDR_BROADCAST:
-                data = "NOTICE * :*** BROADCAST: "+self.getString( DATA_STRING )+"\r\n"
+                data = "NOTICE * :*** BROADCAST: "+ircText( self.getString( DATA_STRING , "" ) )+"\r\n"
 
             # Twisted's transport.write requires bytes in Python 3.
             return data.encode( 'mac-roman' ) if isinstance( data , str ) else data

@@ -58,6 +58,21 @@ TCP_KEEPALIVE_INTERVAL = 15
 TCP_KEEPALIVE_COUNT = 4
 TCP_USER_TIMEOUT = 90
 BAN_TIME = 15 * 60
+# Abuse limits.
+#  - LOGIN_TIMEOUT: seconds a connection may stay open without logging in.
+#  - MAX_CONNECTIONS_PER_IP: simultaneous connections allowed from one
+#    address (0 = unlimited).
+#  - MAX_LOGIN_FAILURES: failed logins from one address within
+#    LOGIN_FAILURE_WINDOW seconds before it is banned for BAN_TIME
+#    (0 = never ban).
+#  - MAX_PACKET_SIZE: largest Hotline transaction accepted, in bytes.
+#  - MAX_IRC_LINE: longest IRC line accepted, in bytes.
+LOGIN_TIMEOUT = 60
+MAX_CONNECTIONS_PER_IP = 10
+MAX_LOGIN_FAILURES = 5
+LOGIN_FAILURE_WINDOW = 5 * 60
+MAX_PACKET_SIZE = 1024 * 1024
+MAX_IRC_LINE = 8192
 
 # Path (relative to the server working directory or absolute) to a plain-
 # text file containing the connection agreement. The classic 1.9 client

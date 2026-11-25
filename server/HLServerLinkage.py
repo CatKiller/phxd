@@ -102,7 +102,11 @@ class HLServerLinker( Factory ):
     def __init__( self, server ):
         self.server = server
         self.links = []
-        reactor.listenTCP( LINK_PORT, self )
+        # Linked servers are trusted completely (they can add users and send
+        # any packet to any local user) and there is no authentication, so
+        # only listen when linking is explicitly enabled.
+        if ENABLE_SERVER_LINKING:
+            reactor.listenTCP( LINK_PORT, self )
     
     def buildProtocol( self, addr ):
         print("got link connection from %s" % addr.host)

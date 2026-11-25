@@ -24,6 +24,7 @@ for modName in server.handlers.__all__:
         traceback.print_exc()
 
 serv.logEvent( LOG_TYPE_GENERAL , "Server started on port %d" % serv.port )
-print( "phxd listening on TCP %d (default accounts: admin/adminpass, guest/<no password>)" % serv.port , flush = True )
+print( "phxd listening on TCP %d" % serv.port , flush = True )
+serv.warnDefaultAdmin()
 reactor.run()
 serv.logEvent( LOG_TYPE_GENERAL , "Server stopped" )

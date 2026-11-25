@@ -28,20 +28,52 @@ def parseDir( dir ):
         count -= 1
     return parts
 
-def buildPath( root , dir , file = None ):
-    """ Build a path from a root directory, an array of directory parts, and a filename. Filter out any references to .. """
-    pathArray = []
-    pathArray.append( root )
-    for part in dir:
+def _checkName( part ):
+    """ Raises HLException unless ``part`` is a single, ordinary file or
+    folder name: one that can't climb out of, or skip past, its folder. """
+    if ( part in ( "." , ".." ) ) or ( "/" in part ) or ( os.sep in part ) or ( "\0" in part ):
+        raise HLException( "Invalid file or folder name." )
+
+def relativeParts( dir , file = None ):
+    """ Returns the validated path components (str) for a directory part
+    list and an optional filename, ignoring empty parts. """
+    parts = []
+    for part in list( dir ) + ( [ file ] if file else [] ):
         if isinstance( part , (bytes , bytearray) ):
             part = part.decode( 'mac-roman' )
-        if ( len( part ) > 0 ) and ( part != ".." ):
-            pathArray.append( part )
-    if ( file != None ) and ( len( file ) > 0 ):
-        if isinstance( file , (bytes , bytearray) ):
-            file = file.decode( 'mac-roman' )
-        pathArray.append( file )
-    return os.sep.join( pathArray )
+        if len( part ) == 0:
+            continue
+        _checkName( part )
+        parts.append( part )
+    return parts
+
+def buildPath( root , dir , file = None ):
+    """ Build a path from a root directory, an array of directory parts, and
+    a filename. Raises HLException for any path that would leave ``root``. """
+    parts = relativeParts( dir , file )
+    path = os.sep.join( [ root ] + parts )
+    rootAbs = os.path.abspath( root )
+    pathAbs = os.path.abspath( path )
+    if ( pathAbs != rootAbs ) and not pathAbs.startswith( rootAbs.rstrip( os.sep ) + os.sep ):
+        raise HLException( "Invalid file or folder name." )
+    return path
+
+def requireName( name ):
+    """ Returns ``name``, or raises HLException if it is empty (which would
+    make the operation apply to the containing folder itself). """
+    if not name:
+        raise HLException( "No file or folder name given." )
+    return name
+
+def checkDropBox( user , parts ):
+    """ Users without PRIV_VIEW_DROPBOXES may upload into drop boxes but
+    not see or fetch what is in them. """
+    if isDropBox( parts ) and not user.hasPriv( PRIV_VIEW_DROPBOXES ):
+        raise HLException( "You are not allowed to view drop boxes." )
+
+def isDropBox( parts ):
+    """ True if the path (relative to the file root) is in a drop box. """
+    return any( "DROP BOX" in part.upper() for part in parts )
 
 def getFileType( path ):
     if os.path.isdir( path ):
@@ -74,16 +106,17 @@ class FileHandler( HLPacketHandler ):
     def handleFileList( self , server , user , packet ):
         dir = parseDir( packet.getBinary( DATA_DIR ) )
         path = buildPath( user.account.fileRoot , dir )
-        
+        parts = relativeParts( dir )
+
         if not os.path.exists( path ):
             raise HLException("The specified directory does not exist.")
         if not os.path.isdir( path ):
             raise HLException("The specified path is not a directory.")
-        if ( not user.hasPriv( PRIV_VIEW_DROPBOXES ) ) and ( path.upper().find( "DROP BOX" ) >= 0 ):
+        if ( not user.hasPriv( PRIV_VIEW_DROPBOXES ) ) and isDropBox( parts ):
             raise HLException("You are not allowed to view drop boxes.")
-        fn = path.split("/")[-1] # gets folder name kang
+        fn = parts[-1] if parts else "" # gets folder name kang
         #beware of non exact matches!! FIXME
-        if (path.upper().find("DROP BOX") >= 0) and (fn.upper()[0:4] != "DROP") and (fn.upper().find(user.account.login.upper()) < 0):
+        if isDropBox( parts ) and (fn.upper()[0:4] != "DROP") and (fn.upper().find(user.account.login.upper()) < 0):
             raise HLException("Sorry, this is not your dropbox. You are not allowed to view it")
         
         reply = HLPacket( HTLS_HDR_TASK , packet.seq )
@@ -111,13 +144,16 @@ class FileHandler( HLPacketHandler ):
         resume = HLResumeData( packet.getBinary( DATA_RESUME ) )
         options = packet.getNumber( DATA_XFEROPTIONS , 0 )
         
-        path = buildPath( user.account.fileRoot , dir , name )
         if not user.hasPriv( PRIV_DOWNLOAD_FILES ):
             raise HLException("You are not allowed to download files.")
-        if not os.path.exists( path ):
+        path = buildPath( user.account.fileRoot , dir , requireName( name ) )
+        checkDropBox( user , relativeParts( dir ) )
+        if not os.path.isfile( path ):
             raise HLException("Specified file does not exist.")
         
         offset = resume.forkOffset( HLCharConst( "DATA" ) )
+        if ( offset < 0 ) or ( offset > os.path.getsize( path ) ):
+            offset = 0
         xfer = server.fileserver.addDownload( user.uid , path , offset )
         
         reply = HLPacket( HTLS_HDR_TASK , packet.seq )
@@ -138,11 +174,12 @@ class FileHandler( HLPacketHandler ):
         if not user.hasPriv( PRIV_UPLOAD_FILES ):
             raise HLException("You are not allowed to upload files.")
         
-        path = buildPath( user.account.fileRoot , dir , name )
+        path = buildPath( user.account.fileRoot , dir , requireName( name ) )
         if os.path.exists( path ):
             # If this path exists, theres already a complete file.
             raise HLException("File already exists.")
-        if ( not user.hasPriv( PRIV_UPLOAD_ANYWHERE ) ) and ( path.upper().find( "UPLOAD" ) < 0 ):
+        dirParts = relativeParts( dir )
+        if ( not user.hasPriv( PRIV_UPLOAD_ANYWHERE ) ) and not any( "UPLOAD" in part.upper() for part in dirParts ):
             raise HLException("You must upload to an upload directory.")
         
         # Make sure we have enough disk space to accept the file. In Py3
@@ -150,6 +187,8 @@ class FileHandler( HLPacketHandler ):
         # the old ``F_BAVAIL`` / ``F_FRSIZE`` constants from the (removed)
         # ``statvfs`` module are gone. Use the named attributes instead.
         upDir = buildPath( user.account.fileRoot , dir )
+        if not os.path.isdir( upDir ):
+            raise HLException("The specified directory does not exist.")
         info = os.statvfs( upDir )
         free = info.f_bavail * info.f_frsize
         if size > free:
@@ -174,19 +213,27 @@ class FileHandler( HLPacketHandler ):
         dir = parseDir( packet.getBinary( DATA_DIR ) )
         name = packet.getString( DATA_FILENAME , "" )
         
-        path = buildPath( user.account.fileRoot , dir , name )
-        if not user.hasPriv( PRIV_DELETE_FILES ):
-            raise HLException("You are not allowed to delete files.")
-        if not os.path.exists( path ):
+        path = buildPath( user.account.fileRoot , dir , requireName( name ) )
+        if not os.path.lexists( path ):
             raise HLException("Specified file does not exist.")
+        isFolder = os.path.isdir( path ) and not os.path.islink( path )
+        if isFolder and not user.hasPriv( PRIV_DELETE_FOLDERS ):
+            raise HLException("You are not allowed to delete folders.")
+        if ( not isFolder ) and not user.hasPriv( PRIV_DELETE_FILES ):
+            raise HLException("You are not allowed to delete files.")
         
-        if os.path.isdir( path ):
-            # First, recursively delete everything inside the directory.
+        if isFolder:
+            # First, recursively delete everything inside the directory
+            # (symbolic links are removed, never followed).
             for ( root , dirs , files ) in os.walk( path , topdown = False ):
                 for name in files:
                     os.unlink( os.path.join( root , name ) )
                 for name in dirs:
-                    os.rmdir( os.path.join( root , name ) )
+                    sub = os.path.join( root , name )
+                    if os.path.islink( sub ):
+                        os.unlink( sub )
+                    else:
+                        os.rmdir( sub )
             # Then delete the directory itself.
             os.rmdir( path )
         else:
@@ -198,10 +245,10 @@ class FileHandler( HLPacketHandler ):
         dir = parseDir( packet.getBinary( DATA_DIR ) )
         name = packet.getString( DATA_FILENAME , "" )
         
-        path = buildPath( user.account.fileRoot , dir , name )
         if not user.hasPriv( PRIV_CREATE_FOLDERS ):
             raise HLException("You are not allowed to create folders.")
-        if os.path.exists( path ):
+        path = buildPath( user.account.fileRoot , dir , requireName( name ) )
+        if os.path.lexists( path ):
             raise HLException("Specified directory/file already exists.")
         
         os.mkdir( path , 0o755 )
@@ -212,14 +259,19 @@ class FileHandler( HLPacketHandler ):
         newDir = parseDir( packet.getBinary( DATA_NEWDIR ) )
         name = packet.getString( DATA_FILENAME , "" )
         
-        oldPath = buildPath( user.account.fileRoot , oldDir , name )
+        oldPath = buildPath( user.account.fileRoot , oldDir , requireName( name ) )
         newPath = buildPath( user.account.fileRoot , newDir , name )
         
-        if not user.hasPriv( PRIV_MOVE_FILES ):
-            raise HLException("You are not allowed to move files.")
-        if not os.path.exists( oldPath ):
+        if not os.path.lexists( oldPath ):
             raise HLException("Invalid file or directory.")
-        if os.path.exists( newPath ):
+        if os.path.isdir( oldPath ):
+            if not user.hasPriv( PRIV_MOVE_FOLDERS ):
+                raise HLException("You are not allowed to move folders.")
+            if os.path.abspath( newPath ).startswith( os.path.abspath( oldPath ) + os.sep ):
+                raise HLException("A folder cannot be moved into itself.")
+        elif not user.hasPriv( PRIV_MOVE_FILES ):
+            raise HLException("You are not allowed to move files.")
+        if os.path.lexists( newPath ):
             raise HLException("The specified file already exists.")
         
         os.rename( oldPath , newPath )
@@ -229,7 +281,8 @@ class FileHandler( HLPacketHandler ):
         dir = parseDir( packet.getBinary( DATA_DIR ) )
         name = packet.getString( DATA_FILENAME , "" )
         
-        path = buildPath( user.account.fileRoot , dir , name )
+        path = buildPath( user.account.fileRoot , dir , requireName( name ) )
+        checkDropBox( user , relativeParts( dir ) )
         if not os.path.exists( path ):
             raise HLException("No such file or directory.")
         
@@ -237,7 +290,7 @@ class FileHandler( HLPacketHandler ):
         info.addString( DATA_FILENAME , name )
         # FILESIZE/FILETYPE/FILECREATOR are 32-bit on the wire; addNumber's
         # auto-sizing would shrink small values (or 0 for folders) to 16 bits.
-        info.addInt32( DATA_FILESIZE , os.path.getsize( path ) )
+        info.addInt32( DATA_FILESIZE , os.path.getsize( path ) & 0xFFFFFFFF )
         info.addInt32( DATA_FILETYPE , getFileType( path ) )
         info.addInt32( DATA_FILECREATOR , getFileCreator( path ) )
         server.sendPacket( user.uid , info )
@@ -247,16 +300,19 @@ class FileHandler( HLPacketHandler ):
         oldName = packet.getString( DATA_FILENAME , "" )
         newName = packet.getString( DATA_NEWFILE , oldName )
         
-        if ( oldName != newName ) and ( not user.hasPriv( PRIV_RENAME_FILES ) ):
-            raise HLException("You cannot rename files.")
+        oldPath = buildPath( user.account.fileRoot , dir , requireName( oldName ) )
+        newPath = buildPath( user.account.fileRoot , dir , requireName( newName ) )
         
-        oldPath = buildPath( user.account.fileRoot , dir , oldName )
-        newPath = buildPath( user.account.fileRoot , dir , newName )
-        
-        if not os.path.exists( oldPath ):
+        if not os.path.lexists( oldPath ):
             raise HLException("Invalid file or directory.")
-        if os.path.exists( newPath ):
+        if oldName != newName:
+            if os.path.isdir( oldPath ):
+                if not user.hasPriv( PRIV_RENAME_FOLDERS ):
+                    raise HLException("You cannot rename folders.")
+            elif not user.hasPriv( PRIV_RENAME_FILES ):
+                raise HLException("You cannot rename files.")
+        if os.path.lexists( newPath ):
             raise HLException("The specified file already exists.")
         
         os.rename( oldPath , newPath )
-        server.sendPacket( user.uid , HLPacket( HTLS_HDR_TASK , packet.seq ) )  
+        server.sendPacket( user.uid , HLPacket( HTLS_HDR_TASK , packet.seq ) )

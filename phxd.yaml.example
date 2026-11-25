@@ -40,3 +40,10 @@ log_level: INFO
 # tls_key: /etc/letsencrypt/live/chat.example.org/privkey.pem
 # hotline_tls_port: 5600
 # irc_tls_port: 6697
+
+# Abuse limits (0 disables the per-address ones). They assume phxd sees each
+# client's real address; behind a proxy that hides it, set the first two to 0.
+# max_connections_per_ip: 10
+# max_login_failures: 5
+# login_failure_window: 300
+# login_timeout: 60

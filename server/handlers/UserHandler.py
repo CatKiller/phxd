@@ -96,21 +96,26 @@ class UserHandler( HLPacketHandler ):
                 login = storedLogin
                 user.account = server.database.loadAccount( login )
         if user.account == None:
-            server.log.info( "Login failed: account %r not found" , login )
-            raise HLException( "Login is incorrect." , True)
+            server.log.info( "Login failed: account %r not found (ip=%s)" , login , user.ip )
+            server.recordLoginFailure( user.ip )
+            # Same message as a wrong password, so that failed logins
+            # don't reveal which accounts exist.
+            raise HLException( "Login or password is incorrect." , True)
         # ``HLEncode`` always returns ``bytes`` (the on-the-wire form)
         # post-port, so feed those directly to md5.
         password_for_hash = password if isinstance( password , (bytes , bytearray) ) else password.encode( 'mac-roman' )
         if user.account.password != md5( password_for_hash ).hexdigest():
             # IRC logins carry no nick; keep the one the user already has.
             nick_raw = packet.getString( DATA_NICK , user.nick or "unnamed" )
-            if isinstance( nick_raw , (bytes , bytearray) ):
-                nick_raw = nick_raw.decode( 'mac-roman' )
-            user.nick = nick_raw
+            user.nick = cleanNick( nick_raw )[:MAX_NICK_LEN]
 
             server.logEvent( LOG_TYPE_LOGIN , "Login failure" , user )
-            server.log.info( "Login failed: bad password for %r (got md5=%s, want=%s)" , login , md5( password_for_hash ).hexdigest() , user.account.password )
-            raise HLException( "Password is incorrect." , True)
+            server.log.info( "Login failed: bad password for %r (ip=%s)" , login , user.ip )
+            server.recordLoginFailure( user.ip )
+            # The account was loaded for this attempt only; a failed login
+            # must not leave it (and its privileges) attached to the user.
+            user.account = None
+            raise HLException( "Login or password is incorrect." , True)
         if user.account.fileRoot == "":
             user.account.fileRoot = FILE_ROOT
         
@@ -212,8 +217,8 @@ class UserHandler( HLPacketHandler ):
     
     def handleUserChange( self , server , user , packet ):
         oldnick = user.nick
-        user.nick = packet.getString( DATA_NICK , user.nick )
-        user.icon = packet.getNumber( DATA_ICON , user.icon )
+        user.nick = cleanNick( packet.getString( DATA_NICK , user.nick ) )
+        user.icon = packet.getNumber( DATA_ICON , user.icon ) & 0xFFFF
         user.color = packet.getNumber( DATA_COLOR , user.color )
         
         # Limit nickname length.
@@ -229,7 +234,7 @@ class UserHandler( HLPacketHandler ):
         # Users that aren't logged in yet (e.g. hit by the idle check) have
         # no account, so leave their nickname alone.
         if not user.hasPriv( PRIV_USE_ANY_NAME ) and user.account is not None:
-            user.nick = user.account.name
+            user.nick = cleanNick( user.account.name )
         
         change = HLPacket( HTLS_HDR_USER_CHANGE )
         change.addNumber( DATA_UID , user.uid )

@@ -50,6 +50,14 @@ def _to_str( s ):
         return s.decode( 'mac-roman' )
     return s
 
+def _checkAccountText( *values ):
+    """ Logins and names are stored in a tab-separated text file, one
+    account per line: tabs, newlines and other control characters in them
+    would corrupt it (or forge extra accounts). """
+    for value in values:
+        if value and CONTROL_CHARS.search( _to_str( value ) ):
+            raise HLException( "Logins and names cannot contain control characters." )
+
 def installHandler( server ):
     server.registerPacketHandler( AcctHandler() )
 
@@ -95,6 +103,7 @@ class AcctHandler( HLPacketHandler ):
             raise HLException("You cannot modify accounts.")
         if acct == None:
             raise HLException("Invalid account.")
+        _checkAccountText( name )
         
         acct.name = name
         acct.privs = privs
@@ -115,6 +124,7 @@ class AcctHandler( HLPacketHandler ):
         
         if not user.hasPriv( PRIV_CREATE_USERS ):
             raise HLException("You cannot create accounts.")
+        _checkAccountText( login , name )
         if server.database.loadAccount( login ) != None:
             raise HLException("Login already exists.")
         
@@ -227,6 +237,7 @@ class AcctHandler( HLPacketHandler ):
             # through the existing int-based account schema unchanged.
             privs_int = unpack( "!Q" , privs_bytes )[0] if privs_bytes and len( privs_bytes ) == 8 else None
             password_field = sub.get( DATA_PASSWORD , None )
+            _checkAccountText( new_login , name )
 
             if existing is not None:
                 # Modify (or rename + modify).

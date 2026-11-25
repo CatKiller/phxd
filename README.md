@@ -34,6 +34,8 @@ The program offers two methods of storing server related data (accounts, news, e
 
 Connections whose client vanished without closing them (network drop, sleep, NAT timeout) are detected with TCP keepalive and closed within about two minutes, instead of the user staying listed for 15 minutes or more; see the **"TCP\_KEEPALIVE\_\*"** and **"TCP\_USER\_TIMEOUT"** settings.
 
+Abuse limits: connections that don't log in within **"LOGIN\_TIMEOUT"** seconds (60) are closed, an address may hold at most **"MAX\_CONNECTIONS\_PER\_IP"** connections (10), and an address that fails to log in **"MAX\_LOGIN\_FAILURES"** times (5) within **"LOGIN\_FAILURE\_WINDOW"** seconds is banned for **"BAN\_TIME"**. Hotline transactions larger than **"MAX\_PACKET\_SIZE"** and IRC lines longer than **"MAX\_IRC\_LINE"** close the connection. These limits rely on phxd seeing each client's real address (it is logged as "Client connected: <address>"): if every client shows the same address, e.g. a proxy's or Docker's, set **"max\_connections\_per\_ip"** and **"max\_login\_failures"** to 0, or everyone would share one allowance.
+
 The **"SERVER\_NAME"** and **"SERVER\_DESCRIPTION"** attributes will be used to advertise the server to Hotline tracker servers.
 By default, the **phxd** instance will not be listed on any trackers. This can be changed with the **"TRACKER\_LIST"** setting, a list of tracker hostnames (or IP addresses) and ports. The Hotline server default port for advertising servers is **5499**, this differs to the port used by clients to list servers. The following configuration will get your server listed on the (currently) most active Hotline trackers running:
 
@@ -165,7 +167,7 @@ Rebuilding the image is only needed to update **phxd** itself. Since all of **ph
 # Usage
 Once running, **phxd** can be connected to by pointing any Hotline or IRC client at its **"server\_port"** (5500 by default; the Docker example above also publishes it on the usual IRC port 6667), or, over TLS, at **"hotline\_tls\_port"** (Hotline) and **"irc\_tls\_port"** (IRC).
 * **Hotline**
-When using a Hotline client, you can connect to the server as "Guest" by using a username of "guest" and no password. Guest access is fairly limited, and this is only useful to test your server. You **will** need to login as "admin" using a default password of "adminpass" and immediately change the admin password to a pass of your choice, or delete the admin account (after creating another privileged account of course).
+When using a Hotline client, you can connect to the server as "Guest" by using a username of "guest" and no password. Guest access is fairly limited, and this is only useful to test your server. You **will** need to login as "admin" using a default password of "adminpass" and immediately change the admin password to a pass of your choice, or delete the admin account (after creating another privileged account of course). Until you do, anyone can take control of the server, and **phxd** logs a warning at every start.
 * **IRC**
 When using an IRC client, you **must** log in, either as **"guest"** or as any other User (e.g. **"admin"**), in order to access any functionality of the server. Any of the following works:
 
