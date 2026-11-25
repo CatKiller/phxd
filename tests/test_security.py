@@ -787,3 +787,122 @@ def test_account_updates_match_logins_exactly(irc_server):
     other = make_account(login="TESTER", privs=PRIV_BROADCAST)
     irc_server.server.updateAccounts(other)
     assert not client.user.hasPriv(PRIV_BROADCAST)
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 3: denial of service and data integrity
+# ---------------------------------------------------------------------------
+
+
+def _xfer_conn(irc_server, host):
+    from server.HLFileServer import HLTransferConnection
+
+    conn = HLTransferConnection()
+    conn.factory = irc_server.server.fileserver
+    transport = FakeXferTransport(host)
+    transport.loseConnection = lambda: (setattr(transport, "closed", True), conn.connectionLost(None))
+    conn.makeConnection(transport)
+    return conn
+
+
+class TestTransferPortLimits:
+    def test_idle_connections_time_out(self, irc_server):
+        conn = _xfer_conn(irc_server, "10.7.7.7")
+        irc_server.clock.advance(31)
+        assert conn.transport.closed
+
+    def test_connections_per_address_are_limited(self, irc_server):
+        conns = [_xfer_conn(irc_server, "10.7.7.8") for _ in range(11)]
+        assert [c.transport.closed for c in conns] == [False] * 10 + [True]
+        # Closing frees a slot.
+        conns[0].closeConnection()
+        assert not _xfer_conn(irc_server, "10.7.7.8").transport.closed
+
+    def test_pending_transfers_per_user_are_limited(self, irc_server, tmp_path):
+        root = tmp_path / "files"
+        root.mkdir(exist_ok=True)
+        (root / "a.txt").write_text("a")
+        for acct in irc_server.database.accounts:
+            acct.fileRoot = str(root)
+            acct.privs |= PRIV_DOWNLOAD_FILES
+        client = irc_server.hotline_client()
+        client.login("guest", "", "alice")
+        errors(client)
+        for _ in range(21):
+            client.send_packet(HTLC_HDR_FILE_GET, [(DATA_FILENAME, "a.txt")])
+        assert len(irc_server.server.fileserver.transfers) == 20
+        assert errors(client) == ["Too many file transfers at once, please wait for some to finish."]
+
+
+class TestTextDatabaseIntegrity:
+    @pytest.fixture
+    def db(self, tmp_path, monkeypatch):
+        from server.database.TextDatabase import TextDatabase
+
+        db = TextDatabase()
+        db.accountsFile = str(tmp_path / "accounts.txt")
+        db.newsDir = str(tmp_path / "news")
+        (tmp_path / "accounts.txt").write_text(
+            "admin\t1\thash\tAdministrator\t0\t\t0\t0\t0000-00-00 00:00:00\n"
+        )
+        return db
+
+    def test_failed_write_keeps_the_old_accounts(self, db, monkeypatch):
+        import builtins
+
+        real_open = builtins.open
+
+        def failing_open(path, mode="r", *args, **kwargs):
+            if str(path).endswith(".tmp"):
+                raise OSError(28, "No space left on device")
+            return real_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", failing_open)
+        with pytest.raises(OSError):
+            db.updateAccountStats("admin", 0, 0, True)
+        monkeypatch.setattr(builtins, "open", real_open)
+        assert db.loadAccount("admin") is not None
+
+    def test_news_posts_are_never_overwritten(self, db):
+        from shared.HLTypes import HLNewsPost
+
+        os.makedirs(db.newsDir)
+        # Unsorted listings must not make a new post reuse a number.
+        for n in (1, 2, 10):
+            with open(os.path.join(db.newsDir, "%d.txt" % n), "w") as fp:
+                fp.write("%d\t2026-01-01\tlogin\tnick\npost %d" % (n, n))
+        db.saveNewsPost(HLNewsPost("nick", "login", "new post"))
+        assert open(os.path.join(db.newsDir, "11.txt")).read().endswith("new post")
+        for n in (1, 2, 10):
+            assert open(os.path.join(db.newsDir, "%d.txt" % n)).read().endswith("post %d" % n)
+
+
+def test_chat_is_not_logged_when_disk_is_low(irc_server, tmp_path, monkeypatch):
+    import server.handlers.ChatHandler as chat
+    import shared.HLProtocol as proto
+
+    (tmp_path / "chatlogs").mkdir()
+    monkeypatch.setattr(chat, "LOG_DIR", str(tmp_path / "chatlogs"))
+    monkeypatch.setattr(proto, "MIN_FREE_SPACE_MB", 1 << 40)
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    client.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "hello")])
+    assert os.listdir(tmp_path / "chatlogs") == []
+
+
+def test_find_is_bounded(irc_server, tmp_path, monkeypatch):
+    import server.handlers.commands.find as find
+
+    root = tmp_path / "files"
+    root.mkdir(exist_ok=True)
+    for i in range(50):
+        (root / ("match%d" % i)).write_text("")
+    monkeypatch.setattr(find, "FIND_MAX_MATCHES", 10)
+    for acct in irc_server.database.accounts:
+        acct.fileRoot = str(root)
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    client.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "/find match")])
+    out = client.transport.data
+    assert out.count(b"- /match") <= 10
+    assert b"search stopped" in out

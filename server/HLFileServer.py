@@ -20,9 +20,27 @@ class HLTransferConnection( GracefulCloseMixin , Protocol ):
         # Twisted hands raw bytes to ``dataReceived``; keep the buffer
         # bytes so concatenation and unpack on it both work in Py3.
         self.buffer = b""
-    
+        # A connection that doesn't say which transfer it is for within
+        # XFER_START_TIMEOUT is dropped, and an address may only hold
+        # as many of these as it may hold server connections.
+        self.startTimer = reactor.callLater( XFER_START_TIMEOUT , self._startTimeout )
+        try:
+            self.peerHost = self.transport.getPeer().host
+        except Exception:
+            self.peerHost = None
+        if not self.factory.addConnection( self.peerHost ):
+            self.closeConnection()
+
+    def _startTimeout( self ):
+        self.startTimer = None
+        if not self.gotMagic:
+            self.closeConnection()
+
     def connectionLost( self , reason ):
         self.connectionClosed()
+        if ( self.startTimer is not None ) and self.startTimer.active():
+            self.startTimer.cancel()
+        self.factory.removeConnection( self.peerHost )
         if self.info != None:
             self.info.finish()
             self.factory.removeTransfer( self.info.id )
@@ -49,6 +67,9 @@ class HLTransferConnection( GracefulCloseMixin , Protocol ):
             # HTXF magic all at once, or get more than just the magic.
             self.buffer += data
             if len( self.buffer ) >= 16:
+                if ( self.startTimer is not None ) and self.startTimer.active():
+                    self.startTimer.cancel()
+                self.startTimer = None
                 # We got the HTXF magic, parse it.
                 ( proto , xfid , size , flags ) = unpack( "!4L" , self.buffer[0:16] )
                 self.buffer = self.buffer[16:]
@@ -107,12 +128,33 @@ class HLFileServer (Factory):
         self.lastTransferID = 0
         self.transfers = {}
         self.timeouts = {}
+        # Open transfer connections, per peer address.
+        self.connections = {}
         reactor.listenTCP( self.port , self )
 
     def listenTLS( self , port , contextFactory ):
         """ Accepts file transfers over TLS on ``port`` too. """
         reactor.listenSSL( port , self , contextFactory )
     
+    def addConnection( self , host ):
+        """ Counts a new transfer connection from ``host``; returns False
+        if that is more than MAX_CONNECTIONS_PER_IP. """
+        self.connections[host] = self.connections.get( host , 0 ) + 1
+        return ( MAX_CONNECTIONS_PER_IP <= 0 ) or ( self.connections[host] <= MAX_CONNECTIONS_PER_IP )
+
+    def removeConnection( self , host ):
+        count = self.connections.get( host , 0 ) - 1
+        if count > 0:
+            self.connections[host] = count
+        else:
+            self.connections.pop( host , None )
+
+    def checkTransferLimit( self , owner ):
+        """ Raises HLException if ``owner`` already has
+        MAX_TRANSFERS_PER_USER transfers (each holds an open file). """
+        if len( self.findTransfersForUser( owner ) ) >= MAX_TRANSFERS_PER_USER:
+            raise HLException( "Too many file transfers at once, please wait for some to finish." )
+
     def newTransferID( self ):
         """ Returns an unused, unpredictable transfer ID. IDs used to count
         up from 1, so anyone could guess the next one and connect to the
@@ -139,6 +181,7 @@ class HLFileServer (Factory):
 
     def addUpload( self , owner , path ):
         """ Adds an upload to the list of transfers. """
+        self.checkTransferLimit( owner )
         info = HLUpload( self.newTransferID() , path , owner )
         self.transfers[self.lastTransferID] = info
         self.timeouts[info.id] = reactor.callLater( XFER_START_TIMEOUT , self.timeoutTransfer , info.id )
@@ -146,6 +189,7 @@ class HLFileServer (Factory):
     
     def addDownload( self , owner , path , offset ):
         """ Adds a download to the list of transfers. """
+        self.checkTransferLimit( owner )
         info = HLDownload( self.newTransferID() , path , owner , offset )
         self.transfers[self.lastTransferID] = info
         self.timeouts[info.id] = reactor.callLater( XFER_START_TIMEOUT , self.timeoutTransfer , info.id )

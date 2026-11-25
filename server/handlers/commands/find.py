@@ -2,20 +2,32 @@ from __future__ import absolute_import
 from shared.HLProtocol import *
 import os
 
+FIND_MAX_ENTRIES = 20000
+FIND_MAX_MATCHES = 100
+
 def handle( server , user , arg , ref ):
     if len( arg ) > 0:
         pre = len( user.account.fileRoot )
         matches = []
+        # The walk runs on the server's only thread: bound it so a search
+        # of a large share can't stall everyone.
+        visited = 0
+        stopped = False
         for ( root , dirs , files ) in os.walk( user.account.fileRoot ):
             if not user.hasPriv( PRIV_VIEW_DROPBOXES ):
                 # Don't search (or reveal the contents of) drop boxes.
                 dirs[:] = [ d for d in dirs if "DROP BOX" not in d.upper() ]
-            for name in dirs:
+            entries = [ ( "+ " , name ) for name in dirs ] + [ ( "- " , name ) for name in files ]
+            for ( prefix , name ) in entries:
+                visited += 1
+                if ( visited > FIND_MAX_ENTRIES ) or ( len( matches ) >= FIND_MAX_MATCHES ):
+                    stopped = True
+                    break
                 if arg.upper() in name.upper():
-                    matches.append( "+ " + os.path.join( root , name )[pre:] )
-            for name in files:
-                if arg.upper() in name.upper():
-                    matches.append( "- " + os.path.join( root , name )[pre:] )
+                    matches.append( prefix + os.path.join( root , name )[pre:] )
+            if stopped:
+                matches.append( "(search stopped: too many files or matches)" )
+                break
         found = "(none)"
         if len( matches ) > 0:
             found = "\r > ".join( matches )

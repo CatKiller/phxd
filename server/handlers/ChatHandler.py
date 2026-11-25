@@ -43,6 +43,9 @@ def dispatchCommand( server , user , line , ref ):
 def logChat( chat , user ):
     if not os.path.exists( LOG_DIR ):
         return
+    if not hasFreeSpace( LOG_DIR , len( chat ) + 256 ):
+        # Don't let chat fill the disk.
+        return
     timestamp = time.localtime()
     fname = "%04d-%02d-%02d.txt" % ( timestamp[0] , timestamp[1] , timestamp[2] )
     path = os.path.join( LOG_DIR , fname )

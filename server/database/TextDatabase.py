@@ -4,6 +4,7 @@ from shared.HLTypes import *
 from config import *
 from datetime import datetime
 from os import mkdir , listdir , sep
+import os
 import re
 
 def _as_str( s ):
@@ -33,6 +34,26 @@ class TextDatabase (HLDatabase):
             99: "Errors" ,
         }
     
+    def _writeAccounts( self , lines ):
+        """ Replaces the accounts file atomically: the new contents go to a
+        temporary file that is renamed over the old one, so a full disk or
+        a crash mid-write can't leave a truncated file (and lose every
+        account). Raises OSError if the new file can't be written, leaving
+        the old one in place. """
+        tmp = self.accountsFile + ".tmp"
+        try:
+            with open( tmp , "w" ) as fp:
+                fp.write( "".join( lines ) )
+                fp.flush()
+                os.fsync( fp.fileno() )
+            os.replace( tmp , self.accountsFile )
+        except OSError:
+            try:
+                os.unlink( tmp )
+            except OSError:
+                pass
+            raise
+
     def loadAccount( self , login ):
         """ Creates a new HLAccount object and loads information for the specified login into it. Returns None if unsuccessful. """
         login = _as_str( login )
@@ -91,9 +112,7 @@ class TextDatabase (HLDatabase):
                     return False
             if not found:
                 return False
-            fp = open( self.accountsFile , "w" )
-            fp.write( "".join( lines ) )
-            fp.close()
+            self._writeAccounts( lines )
         else:
             # First check to see if the login already exists.
             for l in lines:
@@ -113,9 +132,7 @@ class TextDatabase (HLDatabase):
                     if uid > maxuid:
                         maxuid = uid
             lines.append( "%s\t%s\t%s\t%s\t%s\t%s\t0\t0\t0000-00-00 00:00:00\n" % ( acct.login , maxuid + 1 , acct.password , acct.name , acct.privs , acct.fileRoot ) )
-            fp = open( self.accountsFile , "w" )
-            fp.write( "".join( lines ) )
-            fp.close()
+            self._writeAccounts( lines )
         return True
     
     def listAccounts( self ):
@@ -162,9 +179,7 @@ class TextDatabase (HLDatabase):
                 break
         if not found:
             return False
-        fp = open( self.accountsFile , "w" )
-        fp.write( "".join( lines ) )
-        fp.close()
+        self._writeAccounts( lines )
         return True
     
     def updateAccountStats( self , login , downloaded , uploaded , setDate = False ):
@@ -192,9 +207,7 @@ class TextDatabase (HLDatabase):
                     break
         if not found:
             return False
-        fp = open( self.accountsFile , "w" )
-        fp.write( "".join( lines ) )
-        fp.close()
+        self._writeAccounts( lines )
         return True
     
     def loadNewsPosts( self , limit = 0 ):
@@ -220,14 +233,18 @@ class TextDatabase (HLDatabase):
             mkdir( self.newsDir )
         except OSError:
             pass
-        try:
-            maxid = int( self.regexNewsID.match( listdir( "%s%s" % ( self.newsDir , sep ) )[-1] ).group() )
-        except:
-            maxid = 0
+        # The highest existing post number (listdir() is in no particular
+        # order, so its last entry isn't necessarily the newest post).
+        maxid = 0
+        for name in listdir( self.newsDir ):
+            match = self.regexNewsID.match( name )
+            if match:
+                maxid = max( maxid , int( match.group() ) )
         if post.id > 0:
             maxid = post.id - 1
         else:
-            fp = open( "%s%s%s.txt" % ( self.newsDir , sep , maxid + 1 ) , "w" )
+            # "x": never overwrite an existing post.
+            fp = open( "%s%s%s.txt" % ( self.newsDir , sep , maxid + 1 ) , "x" )
             fp.write( "%s\t%s\t%s\t%s\n%s" % ( str( maxid + 1 ) , post.date , post.login , post.nick , post.post ) )
             fp.close()
         return True

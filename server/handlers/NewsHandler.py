@@ -48,6 +48,8 @@ class NewsHandler( HLPacketHandler ):
     def handleNewsPost( self , server , user , packet ):
         str = packet.getString( DATA_STRING , "" )
         if user.hasPriv( PRIV_POST_NEWS ):
+            if not hasFreeSpace( DB_FILE_BASEPATH or "." , len( str ) ):
+                raise HLException("The server is low on disk space.")
             if len( str ) > 0:
                 post = HLNewsPost( user.nick , user.account.login , str )
                 server.database.saveNewsPost( post )

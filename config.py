@@ -118,6 +118,8 @@ ALLOW_LINKS_OUTSIDE_FILE_ROOT = False
 ##########################################################
 
 XFER_START_TIMEOUT = 30
+# Transfers a user may have waiting or in progress at once.
+MAX_TRANSFERS_PER_USER = 20
 # Uploads are refused if they would leave less than this much free space
 # (in megabytes) on the disk holding FILE_ROOT, so uploaders can't fill
 # the server's disk.

@@ -61,6 +61,10 @@ try:
 except NameError:
     MIN_FREE_SPACE_MB = 1024
 try:
+    MAX_TRANSFERS_PER_USER
+except NameError:
+    MAX_TRANSFERS_PER_USER = 20
+try:
     ALLOW_LINKS_OUTSIDE_FILE_ROOT
 except NameError:
     ALLOW_LINKS_OUTSIDE_FILE_ROOT = False
