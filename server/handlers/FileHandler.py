@@ -152,6 +152,9 @@ class FileHandler( HLPacketHandler ):
                 # ``os.listdir`` yields ``str`` in Py3; encode the name so
                 # the trailing portion of the binary record is bytes.
                 fname_bytes = fname.encode( 'mac-roman' ) if isinstance( fname , str ) else fname
+                # Sizes are 32-bit on the wire: clamp, rather than fail to
+                # list the whole folder, for files of 4 GiB and more.
+                size = min( size , 0xFFFFFFFF )
                 data = pack( "!5L" , type , creator , size , size , len( fname_bytes ) ) + fname_bytes
                 reply.addBinary( DATA_FILE , data )
         server.sendPacket( user.uid , reply )

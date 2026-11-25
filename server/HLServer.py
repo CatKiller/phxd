@@ -598,8 +598,19 @@ class HLServer( Factory ):
         ( ip , port ) = addr.split( ':' )
         self.linker.link( ip, int(port) )
 
+    def nextUID( self ):
+        """ Returns an unused user ID. User IDs are 16-bit on the wire, so
+        they wrap around within 1..65535 instead of growing with every
+        connection the server ever accepted (which, past 65535, broke the
+        user list for everyone). """
+        for _ in range( 0xFFFF ):
+            self.lastUID = ( self.lastUID % 0xFFFF ) + 1
+            if self.lastUID not in self.clients:
+                return self.lastUID
+        raise RuntimeError( "no free user ID" )
+
     def addRemoteUser( self, remoteUser, sendChange = True ):
-        self.lastUID += 1
+        self.nextUID()
         user = HLUser( self.lastUID, "<linked ip>" )
         user.nick = remoteUser.nick
         user.icon = remoteUser.icon
@@ -675,7 +686,7 @@ class HLServer( Factory ):
     
     def buildProtocol( self , addr ):
         """ Called when the factory accepts a connection and is asked to return a Protocol (in our case, a HLConnection). """
-        self.lastUID += 1
+        self.nextUID()
         conn = HLConnection( self , self.lastUID )
         user = HLUser( self.lastUID , addr.host )
         self.clients[self.lastUID] = ( conn , user )

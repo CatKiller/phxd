@@ -1036,3 +1036,25 @@ def test_who_hides_other_account_names(irc_server):
     lines = [line for line in watcher.take() if " 352 " in line]
     assert lines
     assert not any("Tester" in line for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 12: user IDs must stay 16-bit
+# ---------------------------------------------------------------------------
+
+
+def test_user_ids_wrap_within_16_bits(irc_server):
+    from shared.HLProtocol import HTLC_HDR_USER_LIST
+
+    first = irc_server.hotline_client()
+    first.login("guest", "", "first")
+    # As if 65535 connections had come and gone since the server started.
+    irc_server.server.lastUID = 0xFFFF
+    late = irc_server.hotline_client()
+    late.login("guest", "", "late")
+    assert 0 < late.uid <= 0xFFFF
+    assert late.uid != first.uid
+    # The user list (which packs uids as 16 bits) still works for everyone.
+    first.send_packet(HTLC_HDR_USER_LIST, [])
+    assert not first.closed
+    assert b"late" in first.transport.data
