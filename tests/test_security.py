@@ -906,3 +906,21 @@ def test_find_is_bounded(irc_server, tmp_path, monkeypatch):
     out = client.transport.data
     assert out.count(b"- /match") <= 10
     assert b"search stopped" in out
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 4: TLS
+# ---------------------------------------------------------------------------
+
+
+def test_tls_renegotiation_is_disabled(tmp_path):
+    from OpenSSL import SSL
+
+    from server.HLTLS import buildServerContext
+    from tests.test_tls import write_cert
+
+    cert, key = write_cert(tmp_path, "server")
+    context = buildServerContext(str(cert), str(key))
+    options = context.set_options(0)  # adds nothing, returns the current options
+    assert options & getattr(SSL, "OP_NO_RENEGOTIATION", 0x40000000)
+    assert options & SSL.OP_NO_COMPRESSION

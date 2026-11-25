@@ -27,7 +27,10 @@ def buildServerContext( certPath , keyPath ):
     try:
         context = SSL.Context( SSL.TLS_SERVER_METHOD )
         context.set_min_proto_version( SSL.TLS1_2_VERSION )
-        context.set_options( SSL.OP_NO_COMPRESSION | SSL.OP_CIPHER_SERVER_PREFERENCE )
+        # No TLS 1.2 renegotiation: a client could otherwise make the
+        # server redo expensive handshakes over and over on one connection.
+        context.set_options( SSL.OP_NO_COMPRESSION | SSL.OP_CIPHER_SERVER_PREFERENCE
+                             | getattr( SSL , "OP_NO_RENEGOTIATION" , 0x40000000 ) )
         context.use_certificate_chain_file( certPath )
         context.use_privatekey_file( keyPath )
         context.check_privatekey()
