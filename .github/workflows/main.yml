@@ -41,3 +41,8 @@ jobs:
       run: |
         pip install -r requirements-dev.txt
         pytest
+
+    - name: Known vulnerabilities in dependencies
+      run: |
+        pip install pip-audit
+        pip-audit -r requirements.txt
