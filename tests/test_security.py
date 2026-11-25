@@ -1126,3 +1126,27 @@ class TestPasswordHashing:
         AcctHandler().handleAccountCreate(fake_server, admin_user, packet)
         stored = fake_server.database.loadAccount("newbie").password
         assert not needsUpgrade(stored) and verifyPassword(stored, "pw123")
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 14: traffic before login
+# ---------------------------------------------------------------------------
+
+
+def test_too_many_packets_before_login_closes_the_connection(irc_server, capsys):
+    from shared.HLProtocol import HTLC_HDR_USER_LIST
+
+    client = irc_server.hotline_client()
+    for _ in range(60):
+        client.send_packet(HTLC_HDR_USER_LIST, [])
+    assert client.closed
+    # And nothing was printed for them.
+    assert "before login" not in capsys.readouterr().out
+
+
+def test_normal_irc_registration_is_well_under_the_limit(irc_server):
+    client = irc_server.irc_client()
+    client.send("CAP LS 302", "NICK alice", "USER alice 0 * :Alice", "CAP END", "PING :x", "MODE alice +i")
+    client.send("PRIVMSG loginserv guest")
+    assert client.user.isLoggedIn()
+    assert not client.closed

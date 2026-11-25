@@ -75,6 +75,7 @@ class HLConnection( GracefulCloseMixin , Protocol ):
         self.packet = HLPacket()
         self.buffer = b''
         self.capReplied = False
+        self.preLoginPackets = 0
         self.guestTimer = None
         self.idleTimer = reactor.callLater( IDLE_TIME , self.idleCheck )
         # Connections that never log in are dropped after LOGIN_TIMEOUT.
@@ -303,6 +304,14 @@ class HLConnection( GracefulCloseMixin , Protocol ):
             if not user:
                 self.closeConnection()
                 return
+            if not user.isLoggedIn():
+                # Clients log in first; a connection that keeps sending
+                # other things instead is just using up the server.
+                self.preLoginPackets += 1
+                if self.preLoginPackets > MAX_PRELOGIN_PACKETS:
+                    self.factory.log.info( "Too many packets before login (connID=%d), closing" , self.connID )
+                    self.closeConnection()
+                    return
             if self.isIRC and self.packet.irccap:
                 self.ircHandleCap( self.packet.irccap[0] , self.packet.irccap[1] , user.nick )
                 return
@@ -342,8 +351,8 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                     self.factory.dispatchPacket( self.connID , self.packet )
             else:
                 if ( self.packet.isIRC == 0 ) and ( self.packet.type != 0 ) and ( self.packet.type != 130 ):
-                    print("got packet before login:")
-                    print(self.packet)
+                    # Debug only: anyone can send these, as fast as they like.
+                    self.factory.log.debug( "packet before login (connID=%d): %s" , self.connID , self.packet )
         except HLException as ex:
             # Unhandled packets and task errors will be caught here.
             self.factory.log.warning(

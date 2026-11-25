@@ -60,6 +60,8 @@ try:
     MIN_FREE_SPACE_MB
 except NameError:
     MIN_FREE_SPACE_MB = 1024
+# Packets (or IRC lines) a connection may send before logging in.
+MAX_PRELOGIN_PACKETS = 50
 try:
     MAX_TRANSFERS_PER_USER
 except NameError:
@@ -407,8 +409,9 @@ class HLPacket:
                         self.addNumber( DATA_OPTION , 0 )
                         self.addNumber( DATA_CHATID , chatid )
                     except:
-                        #TODO Handle condition or throw away ?
-                        print("handle that")
+                        # Malformed channel message: ignore it (no log line:
+                        # any client could send these as fast as it likes).
+                        pass
                 # Private Message
                 else:
                     # Authentication "bots"
@@ -429,7 +432,6 @@ class HLPacket:
                         except IndexError:
                             # No password provided, but HL can handle blank passwords, try that.
                             self.addString(DATA_PASSWORD, HLEncode(""))
-                            print("no password provided..")
                     else:
                         try:
                             uid = int( line.split( " " , 2 )[1].split( "_" , 1 )[0] )
@@ -437,8 +439,8 @@ class HLPacket:
                             self.addNumber( DATA_UID , uid )
                             self.addString( DATA_STRING , line.split( " " , 2 )[2][1:] )
                         except:
-                            # Throw an error, needs HLException
-                            print("handle that")
+                            # Malformed private message: ignore it.
+                            pass
             elif cmd == "WHO":
                 self.type = HTLC_HDR_USER_LIST
                 

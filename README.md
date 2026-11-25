@@ -114,6 +114,7 @@ docker run -d --name phxd \
   -p 5500:5500 -p 5501:5501 -p 6667:5500 \
   --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
   --security-opt no-new-privileges \
+  --log-opt max-size=10m --log-opt max-file=5 \
   --restart=unless-stopped \
   phxd:latest
 ```
@@ -125,6 +126,7 @@ docker run -d --name phxd \
 
   The data Volume (and the files directory, in the second case) is handed over to that user on the first start, which also converts data left by older images that ran as root.
 * The **"--cap-drop"**, **"--cap-add"** and **"--security-opt"** options take away the privileges the container doesn't need: only the entrypoint uses the three capabilities kept, to hand over the data directories and switch user. They are optional but recommended.
+* The **"--log-opt"** options rotate the container's log (`docker logs`). Without them Docker keeps the whole log in a single file that grows forever, so a busy or abused server could eventually fill the disk.
 * The **"-v"** options map the data Volume, your configuration file and the directory of files shared with Hotline users (**"FILE\_ROOT"**) into the container. Without the files mount, uploaded files are lost when the container is recreated.
 * The **"-d"** option tells Docker to detach from this container (i.e. run it in the background as a daemon)
 * The **"-p"** options tell Docker which ports to listen to on the host OS and where to remap them inside the container.
