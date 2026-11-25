@@ -1018,3 +1018,21 @@ def test_same_name_cannot_be_uploaded_twice_at_once(irc_server, tmp_path):
     second.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "shared.bin")])
     assert errors(second) == ["This file is already being uploaded."]
     assert len(irc_server.server.fileserver.transfers) == 1
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 11: account names in IRC WHO
+# ---------------------------------------------------------------------------
+
+
+def test_who_hides_other_account_names(irc_server):
+    from tests.test_irc import logged_in_irc_client
+
+    watcher = logged_in_irc_client(irc_server)
+    hl = irc_server.hotline_client()
+    hl.login("tester", "s3cret", "eve")
+    watcher.take()
+    watcher.send("WHO #public")
+    lines = [line for line in watcher.take() if " 352 " in line]
+    assert lines
+    assert not any("Tester" in line for line in lines)

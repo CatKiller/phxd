@@ -594,6 +594,14 @@ class HLPacket:
                 return bytes( obj.data )
         return default
     
+    def _ircRealName( self , viewer , u ):
+        """ The "real name" shown for ``u`` in WHO replies: its account's
+        name only for those allowed to see user info (as for Hotline
+        clients), so guests can't tell who holds privileged accounts. """
+        if ( viewer is not None ) and ( viewer.uid == u.uid or viewer.hasPriv( PRIV_USER_INFO ) ):
+            return ircText( u.account.name ).replace( " " , "_" ) or "-"
+        return ircCheckUserNick( u )
+
     def _ircHost( self , viewer , u ):
         """ The host part of ``u``'s IRC hostmask as shown to ``viewer``:
         IP addresses are only shown to users allowed to see user info (as
@@ -677,7 +685,7 @@ class HLPacket:
                         ( c , u ) = self.server.clients[uid]
                         mynick = ircCheckUserNick( u )
                         if u.isLoggedIn():
-                            data += ":"+IRC_SERVER_NAME+" 352 "+mynick+" #public "+mynick+" "+self._ircHost( user , u )+" "+IRC_SERVER_NAME+" "+ircText( u.account.name ).replace( " ", "_" )+"\r\n"
+                            data += ":"+IRC_SERVER_NAME+" 352 "+mynick+" #public "+mynick+" "+self._ircHost( user , u )+" "+IRC_SERVER_NAME+" "+self._ircRealName( user , u )+"\r\n"
                     data += ":"+IRC_SERVER_NAME+" 315 "+ircText( user.nick )+" #public :End of /WHO list.\r\n"
                 
                 # HTLC_HDR_USER_INFO then :)
