@@ -16,6 +16,10 @@ class IconHandler( HLPacketHandler ):
         self.registerHandlerFunction( HTLC_HDR_ICON_GET , self.handleIconGet )
     
     def handleIconList( self , server , user , packet ):
+        # The reply carries every user's icon (up to MAX_GIF_SIZE each):
+        # clients only need it now and then.
+        if not server.allowRate( "iconlist" , user.uid , 5 , 10 ):
+            raise HLException("Please wait a few seconds before asking for the icons again.")
         list = HLPacket( HTLS_HDR_TASK , packet.seq )
         for u in server.getOrderedUserlist():
             # ``u.gif`` carries raw image bytes; default to empty bytes so

@@ -145,6 +145,8 @@ class ChatHandler( HLPacketHandler ):
         
         if not user.hasPriv( PRIV_CREATE_CHATS ):
             raise HLException("You cannot create private chats.")
+        if not server.allowRate( "chatcreate" , user.uid , 10 , 60 ):
+            raise HLException("Please wait a minute before creating more private chats.")
         
         # First, create the new chat, adding the user.
         chat = server.createChat()

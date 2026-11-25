@@ -1304,3 +1304,33 @@ class TestSharedAddresses:
     def test_ordinary_addresses_are_still_limited(self, irc_server, gateway):
         clients = [irc_server.irc_client(host="10.5.5.5") for _ in range(11)]
         assert clients[-1].closed
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 19: icon lists and private chat creation
+# ---------------------------------------------------------------------------
+
+
+def test_icon_list_requests_are_rate_limited(irc_server):
+    from shared.HLProtocol import HTLC_HDR_ICON_LIST
+
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    errors(client)
+    for _ in range(6):
+        client.send_packet(HTLC_HDR_ICON_LIST, [])
+    assert errors(client) == ["Please wait a few seconds before asking for the icons again."]
+
+
+def test_private_chat_creation_is_rate_limited(irc_server):
+    from shared.HLProtocol import HTLC_HDR_CHAT_CREATE, PRIV_CREATE_CHATS
+
+    guest = next(a for a in irc_server.database.accounts if a.login == "guest")
+    guest.privs |= PRIV_CREATE_CHATS
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    errors(client)
+    for _ in range(11):
+        client.send_packet(HTLC_HDR_CHAT_CREATE, [])
+    assert len(irc_server.server.chats) == 10
+    assert errors(client) == ["Please wait a minute before creating more private chats."]
