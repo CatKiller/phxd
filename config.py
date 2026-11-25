@@ -115,6 +115,10 @@ SHOW_DOTFILES = False
 ##########################################################
 
 XFER_START_TIMEOUT = 30
+# Uploads are refused if they would leave less than this much free space
+# (in megabytes) on the disk holding FILE_ROOT, so uploaders can't fill
+# the server's disk.
+MIN_FREE_SPACE_MB = 1024
 
 ################################################################################
 # GIF icon options

@@ -47,3 +47,5 @@ log_level: INFO
 # max_login_failures: 5
 # login_failure_window: 300
 # login_timeout: 60
+# Uploads must leave this many megabytes free on the files disk.
+# min_free_space_mb: 1024

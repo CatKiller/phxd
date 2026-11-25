@@ -1,11 +1,12 @@
 #!/bin/bash
 
 echo -en "\r> Server-side scripts"
-list=$(ls ./exec)
-for i in $list; do
+for f in ./exec/*; do
+	i=$(basename -- "$f")
+	[ -f "$f" ] && [ -x "$f" ] || continue
 	[ "$i" == "help" ] && continue
 	echo -en "\r> $i: "
-	grep _HELP  exec/$i | head -n 1 | tr -d "_HELP=" | tr -d \" | tr -d '\n'
+	grep -- _HELP "$f" | head -n 1 | tr -d "_HELP=" | tr -d \" | tr -d '\n'
 done
 
 echo -en "\r>\r> Server-side commands"

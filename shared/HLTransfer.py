@@ -127,6 +127,9 @@ class HLUpload( HLTransfer ):
     
     def parseData( self , data ):
         """ Called when data is received from the upload connection. writes any data received for the DATA fork out to the specified file. """
+        # Never accept more than the size announced (and checked against
+        # the free disk space) for this upload.
+        data = data[:max( 0 , self.total - self.transferred )]
         self.buffer += data
         self.transferred += len( data )
         while True:

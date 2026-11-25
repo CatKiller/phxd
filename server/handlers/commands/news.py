@@ -3,9 +3,13 @@ from shared.HLProtocol import *
 from server.handlers.NewsHandler import *
 
 def handle( server , user , arg , ref ):
-    if len( arg ) > 0:
-        limit = int( arg )
-    else:
+    if not user.hasPriv( PRIV_READ_NEWS ):
+        return
+    try:
+        limit = int( arg ) if len( arg ) > 0 else 100
+    except ValueError:
+        limit = 100
+    if limit < 1:
         limit = 100
     
     news = ""

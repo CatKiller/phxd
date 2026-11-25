@@ -189,9 +189,7 @@ class FileHandler( HLPacketHandler ):
         upDir = buildPath( user.account.fileRoot , dir )
         if not os.path.isdir( upDir ):
             raise HLException("The specified directory does not exist.")
-        info = os.statvfs( upDir )
-        free = info.f_bavail * info.f_frsize
-        if size > free:
+        if not hasFreeSpace( upDir , size ):
             raise HLException("Insufficient disk space.")
         
         # All uploads in progress should have this extension.

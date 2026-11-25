@@ -421,3 +421,86 @@ class TestIRCOutput:
         watcher.send("WHO #public")
         text = "\n".join(watcher.take())
         assert "10.3.3.3" not in text
+
+
+# ---------------------------------------------------------------------------
+# Second audit: scripts, uploads, /news
+# ---------------------------------------------------------------------------
+
+
+def test_exec_scripts_quote_user_data():
+    """An unquoted $_VAR inside [ ] lets bash evaluate parts of the value
+    (e.g. array subscripts with -v), i.e. run commands embedded in account
+    data. Every reference to the user/account variables must be quoted."""
+    import re
+
+    exec_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "support", "exec")
+    for name in os.listdir(exec_dir):
+        path = os.path.join(exec_dir, name)
+        if not os.path.isfile(path):
+            continue
+        for number, line in enumerate(open(path), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            # Inside [ ] or [[ ]], any $_VAR or $1 must be within double quotes.
+            for test in re.findall(r"\[\[? (.*?) \]\]?", line):
+                unquoted = re.sub(r'"[^"]*"', "", test)
+                assert "$" not in unquoted, f"{name}:{number}: unquoted variable in test: {line.strip()}"
+
+
+class TestUploadLimits:
+    def _start_upload(self, irc_server, file_root, declared=0):
+        from shared.HLProtocol import (
+            DATA_XFERSIZE,
+            HTLC_HDR_FILE_PUT,
+            PRIV_UPLOAD_ANYWHERE,
+            PRIV_UPLOAD_FILES,
+        )
+
+        guest = next(a for a in irc_server.database.accounts if a.login == "guest")
+        guest.privs |= PRIV_UPLOAD_FILES | PRIV_UPLOAD_ANYWHERE
+        client = irc_server.hotline_client(host="10.0.0.1")
+        client.login("guest", "", "alice")
+        objs = [(DATA_FILENAME, "up.bin")]
+        if declared:
+            objs.append((DATA_XFERSIZE, struct.pack("!L", declared)))
+        client.send_packet(HTLC_HDR_FILE_PUT, objs)
+        (xfer,) = irc_server.server.fileserver.transfers.values()
+        return xfer
+
+    def _connect(self, irc_server, xfid, size):
+        from server.HLFileServer import HLTransferConnection
+
+        conn = HLTransferConnection()
+        conn.factory = irc_server.server.fileserver
+        conn.makeConnection(FakeXferTransport("10.0.0.1"))
+        conn.dataReceived(struct.pack("!4L", 0x48545846, xfid, size, 0))
+        return conn
+
+    def test_size_announced_late_is_checked_against_free_space(self, irc_server, file_root, monkeypatch):
+        import shared.HLProtocol as proto
+
+        xfer = self._start_upload(irc_server, file_root)
+        monkeypatch.setattr(proto, "MIN_FREE_SPACE_MB", 1 << 40)
+        conn = self._connect(irc_server, xfer.id, 1000)
+        assert conn.transport.closed
+
+    def test_no_more_than_the_announced_size_is_written(self, irc_server, file_root):
+        from shared.HLProtocol import HLCharConst
+
+        header = struct.pack("!LHLLLLH", HLCharConst("FILP"), 1, 0, 0, 0, 0, 1)
+        fork = struct.pack("!4L", HLCharConst("DATA"), 0, 0, 0xFFFFFFFF)
+        total = len(header) + len(fork) + 100
+        xfer = self._start_upload(irc_server, file_root, declared=total)
+        conn = self._connect(irc_server, xfer.id, total)
+        conn.dataReceived(header + fork + b"x" * 5000)
+        assert os.path.getsize(file_root / "up.bin") == 100
+
+
+def test_news_command_needs_read_news(irc_server):
+    from shared.HLProtocol import HTLS_HDR_MSG
+
+    irc_server.database.loadNewsPosts = lambda limit: pytest.fail("news read without PRIV_READ_NEWS")
+    client = irc_server.hotline_client()
+    client.login("guest", "", "eve")
+    client.send_packet(HTLC_HDR_CHAT, [(DATA_STRING, "/news")])

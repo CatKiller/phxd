@@ -63,6 +63,13 @@ class HLTransferConnection( GracefulCloseMixin , Protocol ):
                     if self.info.type == XFER_TYPE_UPLOAD:
                         if self.info.total == 0:
                             self.info.total = size
+                        # The request may not have said how big the upload
+                        # is; check again now that the size is known.
+                        if not hasFreeSpace( os.path.dirname( self.info.path ) or "." , self.info.total ):
+                            self.factory.server.log.warning( "Upload %d refused: not enough disk space for %d bytes" , xfid , self.info.total )
+                            self.info.claimed = True
+                            self.closeConnection()
+                            return
                     elif self.info.type == XFER_TYPE_DOWNLOAD:
                         self.transport.registerProducer( self , False )
                     # Cancel the xfer timeout and start it up. The transfer

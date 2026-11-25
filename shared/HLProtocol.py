@@ -56,6 +56,21 @@ try:
     MAX_IRC_LINE
 except NameError:
     MAX_IRC_LINE = 8192
+try:
+    MIN_FREE_SPACE_MB
+except NameError:
+    MIN_FREE_SPACE_MB = 1024
+
+def hasFreeSpace( directory , size ):
+    """ True if ``size`` more bytes can be written in ``directory`` while
+    leaving MIN_FREE_SPACE_MB free on its disk. """
+    import os
+    try:
+        info = os.statvfs( directory )
+    except OSError:
+        return False
+    free = info.f_bavail * info.f_frsize
+    return size + MIN_FREE_SPACE_MB * 1024 * 1024 <= free
 
 # Source prefix for notices from the (virtual) NickServ service.
 NICKSERV_PREFIX = ":NickServ!NickServ@services"
