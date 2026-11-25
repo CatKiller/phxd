@@ -25,8 +25,10 @@ from logging.handlers import RotatingFileHandler
 
 class LogRateLimiter( logging.Filter ):
     """ Lets at most ``perMinute`` log records through per minute, plus
-    every error and security warning; drops the rest and reports how many
-    were dropped once the minute is over. """
+    every security warning; drops the rest (errors included: a bug that
+    any client can trigger mustn't be able to fill the disk with
+    tracebacks) and reports how many were dropped once the minute is
+    over. """
 
     def __init__( self , logger , perMinute , clock = time.time ):
         logging.Filter.__init__( self )
@@ -45,7 +47,7 @@ class LogRateLimiter( logging.Filter ):
             # Below the configured level: the handlers drop it anyway, it
             # mustn't use up the budget.
             return True
-        if ( record.levelno >= logging.ERROR ) or str( record.msg ).startswith( "SECURITY" ):
+        if str( record.msg ).startswith( "SECURITY" ):
             return True
         now = self.clock()
         if now - self.windowStart >= 60:

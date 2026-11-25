@@ -1439,16 +1439,20 @@ class TestLogRateLimiter:
         logger.info("next minute")
         assert records[3:] == ["7 log lines suppressed in the last minute (more than 3 per minute)", "next minute"]
 
-    def test_errors_security_and_debug_lines_are_never_counted_or_dropped(self):
+    def test_security_and_debug_lines_are_never_counted_or_dropped(self):
         logger, records, now = self._limiter()
         for i in range(5):
             logger.debug("debug %d", i)
-            logger.error("error %d", i)
             logger.warning("SECURITY: important %d", i)
-        assert sum(r.startswith("error") for r in records) == 5
         assert sum(r.startswith("SECURITY") for r in records) == 5
         logger.info("still within budget")
         assert records[-1] == "still within budget"
+
+    def test_errors_count_too(self):
+        logger, records, now = self._limiter()
+        for i in range(10):
+            logger.error("traceback %d", i)
+        assert len(records) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -1551,3 +1555,21 @@ def test_logged_login_names_are_truncated(irc_server):
     finally:
         irc_server.server.log.removeHandler(handler)
     assert records and max(len(r) for r in records) < 300
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 31: account name length
+# ---------------------------------------------------------------------------
+
+
+def test_account_logins_and_names_are_length_limited(fake_server, admin_user):
+    from server.handlers.AcctHandler import AcctHandler
+    from shared.HLProtocol import DATA_LOGIN, HLEncode, HLPacket, HTLC_HDR_ACCOUNT_CREATE
+
+    packet = HLPacket(HTLC_HDR_ACCOUNT_CREATE, 1)
+    packet.addString(DATA_LOGIN, HLEncode("x" * 65))
+    with pytest.raises(HLException):
+        AcctHandler().handleAccountCreate(fake_server, admin_user, packet)
+    packet = HLPacket(HTLC_HDR_ACCOUNT_CREATE, 1)
+    packet.addString(DATA_LOGIN, HLEncode("x" * 64))
+    AcctHandler().handleAccountCreate(fake_server, admin_user, packet)

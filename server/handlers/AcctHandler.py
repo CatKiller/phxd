@@ -57,6 +57,9 @@ def _checkAccountText( *values ):
     for value in values:
         if value and CONTROL_CHARS.search( _to_str( value ) ):
             raise HLException( "Logins and names cannot contain control characters." )
+        if value and len( _to_str( value ) ) > 64:
+            # Also the size of the MySQL columns.
+            raise HLException( "Logins and names are limited to 64 characters." )
 
 def _checkPrivs( user , privs , target = None ):
     """ Account managers can't hand out privileges they don't have
