@@ -76,6 +76,16 @@ class HLConnection( GracefulCloseMixin , Protocol ):
         self.buffer = b''
         self.capReplied = False
         self.preLoginPackets = 0
+        # Backpressure: the transport pauses us (as a streaming producer)
+        # when its send buffer is full; a client that stops reading is
+        # disconnected once MAX_PENDING_OUTPUT more bytes pile up, instead
+        # of the server holding ever more unread output in memory.
+        self.outputPaused = False
+        self.pausedBytes = 0
+        try:
+            self.transport.registerProducer( self , True )
+        except Exception:
+            pass
         self.guestTimer = None
         self.idleTimer = reactor.callLater( IDLE_TIME , self.idleCheck )
         # Connections that never log in are dropped after LOGIN_TIMEOUT.
@@ -196,7 +206,7 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                 if proto == HLCharConst( "TRTP" ):
                     self.buffer = self.buffer[12:]
                     self.gotMagic = True
-                    self.transport.write( pack( "!2L" , HLCharConst( "TRTP" ) , 0 ) )
+                    self.send( pack( "!2L" , HLCharConst( "TRTP" ) , 0 ) )
                     # If there is still data in the buffer, check for packets.
                     if len( self.buffer ) > 0:
                         self.parseBuffer()
@@ -248,10 +258,48 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                         self.guestTimer = reactor.callLater( IRC_GUEST_LOGIN_DELAY , self.ircAutoGuest )
                     self.parseBuffer()
 
+    def pauseProducing( self ):
+        # Twisted calls this on every write while the buffer is full: only
+        # start counting when the client goes from reading to not reading.
+        if not self.outputPaused:
+            self.outputPaused = True
+            self.pausedBytes = 0
+
+    def resumeProducing( self ):
+        self.outputPaused = False
+        self.pausedBytes = 0
+
+    def stopProducing( self ):
+        pass
+
+    def closeConnection( self ):
+        try:
+            self.transport.unregisterProducer()
+        except Exception:
+            pass
+        GracefulCloseMixin.closeConnection( self )
+
+    def send( self , data ):
+        """ Writes ``data`` to the client, unless it has stopped reading:
+        then it is disconnected once MAX_PENDING_OUTPUT bytes are waiting. """
+        if self.closing:
+            return
+        if self.outputPaused:
+            self.pausedBytes += len( data )
+            if self.pausedBytes > MAX_PENDING_OUTPUT:
+                self.factory.log.info( "Client not reading its data (connID=%d), disconnecting" , self.connID )
+                self.closing = True
+                if hasattr( self.transport , "abortConnection" ):
+                    self.transport.abortConnection()
+                else:
+                    self.transport.loseConnection()
+                return
+        self.transport.write( data )
+
     def ircWrite( self , text ):
         """ Writes a line of IRC text (str) to the client. Twisted's
         transport.write requires bytes in Python 3. """
-        self.transport.write( text.encode( 'mac-roman' , errors = 'replace' ) )
+        self.send( text.encode( 'mac-roman' , errors = 'replace' ) )
 
     def ircNotice( self , text , sender = NICKSERV_PREFIX ):
         """ Sends a NOTICE to this IRC client. """
@@ -319,7 +367,7 @@ class HLConnection( GracefulCloseMixin , Protocol ):
                 self.ircWrite( self.packet.ircreply )
             if self.isIRC and self.packet.irctrap:
                 # Unsupported command, return 421
-                self.transport.write(
+                self.send(
                     ( ":"+IRC_SERVER_NAME+" 421 %s %s :Unknown command\r\n" % (user.nick, self.packet.irctrap) ).encode( 'mac-roman' )
                 )
                 return
@@ -364,7 +412,7 @@ class HLConnection( GracefulCloseMixin , Protocol ):
             elif self.isIRC:
                 if self.packet.irctrap:
                     # Not sure this is still required since we already return a 421 "Unknown command" reply.
-                    self.transport.write(
+                    self.send(
                         ( "NOTICE * :*** HL Error 0x%x [%s] %s\r\n" % ( self.packet.type, self.packet.irctrap, ex.msg ) ).encode( 'mac-roman' )
                     )
             else:
@@ -411,7 +459,7 @@ class HLConnection( GracefulCloseMixin , Protocol ):
             )
         except Exception:
             pass
-        self.transport.write( flat )
+        self.send( flat )
 
 class HLServer( Factory ):
     """ Factory subclass that handles all global server operations. Also owns database and fileserver objects. """

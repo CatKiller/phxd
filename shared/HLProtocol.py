@@ -73,6 +73,9 @@ try:
 except NameError:
     MAX_CHAT_LINES = 20
     MAX_CHAT_LINES_PER_10S = 30
+# Output (bytes) the server keeps for a client that isn't reading it
+# before disconnecting it: unread output is held in memory.
+MAX_PENDING_OUTPUT = 2 * 1024 * 1024
 # Packets (or IRC lines) a connection may send before logging in.
 MAX_PRELOGIN_PACKETS = 50
 try:

@@ -204,7 +204,7 @@ class UserHandler( HLPacketHandler ):
             ( c , u ) = server.clients[user.uid]
             user.nick = user.nick.replace( " " , "_" )
 
-            c.transport.write(
+            c.send(
                 ( ":%s!~%s@localhost JOIN :#public\r\n" % (user.nick, user.nick) ).encode( 'mac-roman' )
             )
             userlist = server.getOrderedUserlist()
@@ -216,7 +216,7 @@ class UserHandler( HLPacketHandler ):
             data += ":"+IRC_SERVER_NAME+" 366 "+user.nick+" #public :End of /NAMES list.\r\n"
             data += "%s NOTICE %s :You are now identified for %s.\r\n" % ( NICKSERV_PREFIX , user.nick , login )
             data += "NOTICE * :*** You have been forced to join #public\r\n"
-            c.transport.write( data.encode( 'mac-roman' ) )
+            c.send( data.encode( 'mac-roman' ) )
         
         # show welcome msg, needs script support in exec/login !!!
         ret = ""

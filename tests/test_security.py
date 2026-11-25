@@ -1227,3 +1227,35 @@ def test_icon_changes_are_rate_limited(irc_server):
     for _ in range(6):
         client.send_packet(HTLC_HDR_ICON_SET, [(DATA_GIFICON, b"GIF89a")])
     assert errors(client) == ["Please wait a minute before changing your icon again."]
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 17: clients that don't read
+# ---------------------------------------------------------------------------
+
+
+def test_client_that_stops_reading_is_disconnected(irc_server):
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    aborted = []
+    client.transport.abortConnection = lambda: aborted.append(True)
+    # The transport's send buffer is full; Twisted reports it again on
+    # every write while it stays full.
+    client.conn.pauseProducing()
+    for _ in range(100):
+        client.conn.pauseProducing()
+        client.conn.send(b"x" * 64 * 1024)
+        if aborted:
+            break
+    assert aborted
+    assert len(client.transport.data) < 3 * 1024 * 1024
+
+
+def test_reading_client_is_resumed(irc_server):
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    client.conn.pauseProducing()
+    client.conn.send(b"x" * 1000)
+    client.conn.resumeProducing()
+    client.conn.send(b"y" * (3 * 1024 * 1024))
+    assert not client.closed
