@@ -313,12 +313,15 @@ class HLObject:
         """ Returns a flattened, byte-swapped string for this hotline object. """
         #Significantly modified
         type_bytes = self.type.to_bytes(2, byteorder='big')
-        len_bytes = len(self.data).to_bytes(2, byteorder='big')
         data_bytes = self.data
-        
-        if not isinstance(self.data, bytes):
+        if not isinstance(self.data, (bytes, bytearray)):
             # make it bytes
-            data_bytes = self.data.encode('mac-roman')
+            data_bytes = self.data.encode('mac-roman', errors='replace')
+        # A field's length is 16 bits on the wire: longer data (e.g. a
+        # very long message from a client) is cut rather than failing to
+        # send at all. (The length was also taken before encoding.)
+        data_bytes = bytes(data_bytes[:0xFFFF])
+        len_bytes = len(data_bytes).to_bytes(2, byteorder='big')
         return type_bytes + len_bytes + data_bytes
 
 

@@ -1680,3 +1680,24 @@ def test_negative_irc_numbers_are_ignored(irc_server, line):
     alice = logged_in_irc_client(irc_server, "alice")
     alice.send(line)
     assert not alice.closed
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 45: fields longer than 64 KB
+# ---------------------------------------------------------------------------
+
+
+def test_long_fields_are_cut_not_fatal(irc_server):
+    from shared.HLProtocol import DATA_SUBJECT, HLObject, HTLC_HDR_CHAT_SUBJECT
+
+    flat = HLObject(DATA_STRING, b"x" * 100000).flatten()
+    assert struct.unpack("!2H", flat[:4])[1] == 0xFFFF and len(flat) == 4 + 0xFFFF
+    # A non-ASCII str is measured after encoding.
+    flat = HLObject(DATA_STRING, "é").flatten()
+    assert struct.unpack("!2H", flat[:4])[1] == len(flat) - 4
+    member = irc_server.hotline_client()
+    member.login("guest", "", "member")
+    chat = irc_server.server.createChat()
+    chat.addUser(member.user)
+    member.send_packet(HTLC_HDR_CHAT_SUBJECT, [(DATA_CHATID, struct.pack("!L", chat.id)), (DATA_SUBJECT, b"s" * 100000)])
+    assert not member.closed
