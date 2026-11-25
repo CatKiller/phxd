@@ -242,7 +242,10 @@ class UserHandler( HLPacketHandler ):
         oldnick = user.nick
         user.nick = cleanNick( packet.getString( DATA_NICK , user.nick ) )
         user.icon = packet.getNumber( DATA_ICON , user.icon ) & 0xFFFF
-        user.color = packet.getNumber( DATA_COLOR , user.color )
+        color = packet.getNumber( DATA_COLOR , user.color )
+        if ( color is not None ) and ( -1 <= color <= 0xFFFFFFFF ):
+            # Sent back to clients as 32 bits: ignore anything larger.
+            user.color = color
         
         # Limit nickname length.
         user.nick = user.nick[:MAX_NICK_LEN]

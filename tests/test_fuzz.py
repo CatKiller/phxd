@@ -61,10 +61,8 @@ def run(irc_server, seed):
     return unhandled
 
 def test_fuzz(irc_server):
-    all_unhandled = []
-    for seed in range(40):
-        all_unhandled += run(irc_server, seed)
+    unhandled = []
+    for seed in range(10):
+        unhandled += run(irc_server, seed)
         irc_server.clock.advance(120)
-    print("\nUNHANDLED (%d):" % len(all_unhandled))
-    for u in sorted(set(all_unhandled)):
-        print("  ", u)
+    assert unhandled == []

@@ -1643,3 +1643,18 @@ def test_managers_do_not_get_more_privileged_hashes(fake_server):
 
     assert read("admin") == b"x"
     assert read("helper") == b"$p1$helperhash"
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 43 (long fuzzing): out-of-range colours
+# ---------------------------------------------------------------------------
+
+
+def test_out_of_range_colour_is_ignored(irc_server):
+    from shared.HLProtocol import DATA_COLOR
+
+    client = irc_server.hotline_client()
+    client.login("guest", "", "alice")
+    client.send_packet(HTLC_HDR_USER_CHANGE, [(DATA_NICK, "alice"), (DATA_COLOR, struct.pack("!Q", 1 << 40))])
+    assert not client.closed
+    assert client.user.color < (1 << 32)
