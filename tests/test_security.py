@@ -1404,3 +1404,48 @@ def test_refused_requests_are_not_logged_above_debug(irc_server):
         irc_server.server.log.removeHandler(handler)
     noisy = [r for r in records if r.levelno >= logging.INFO and ("HLException" in r.msg or "unknown packet" in r.msg)]
     assert noisy == []
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 26: global log volume
+# ---------------------------------------------------------------------------
+
+
+class TestLogRateLimiter:
+    def _limiter(self, per_minute=3):
+        import logging
+
+        from server.HLServer import LogRateLimiter
+
+        now = [1000.0]
+        logger = logging.getLogger("phxd-test-ratelimit")
+        logger.handlers[:] = []
+        logger.filters[:] = []
+        logger.propagate = False
+        logger.setLevel(logging.DEBUG)
+        records = []
+        handler = logging.Handler()
+        handler.emit = lambda r: records.append(r.getMessage())
+        logger.addHandler(handler)
+        logger.addFilter(LogRateLimiter(logger, per_minute, clock=lambda: now[0]))
+        return logger, records, now
+
+    def test_lines_beyond_the_budget_are_dropped_and_counted(self):
+        logger, records, now = self._limiter()
+        for i in range(10):
+            logger.info("line %d", i)
+        assert records == ["line 0", "line 1", "line 2"]
+        now[0] += 61
+        logger.info("next minute")
+        assert records[3:] == ["7 log lines suppressed in the last minute (more than 3 per minute)", "next minute"]
+
+    def test_errors_security_and_debug_lines_are_never_counted_or_dropped(self):
+        logger, records, now = self._limiter()
+        for i in range(5):
+            logger.debug("debug %d", i)
+            logger.error("error %d", i)
+            logger.warning("SECURITY: important %d", i)
+        assert sum(r.startswith("error") for r in records) == 5
+        assert sum(r.startswith("SECURITY") for r in records) == 5
+        logger.info("still within budget")
+        assert records[-1] == "still within budget"

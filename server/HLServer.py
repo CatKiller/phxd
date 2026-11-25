@@ -23,6 +23,48 @@ from config import *
 import time , logging
 from logging.handlers import RotatingFileHandler
 
+class LogRateLimiter( logging.Filter ):
+    """ Lets at most ``perMinute`` log records through per minute, plus
+    every error and security warning; drops the rest and reports how many
+    were dropped once the minute is over. """
+
+    def __init__( self , logger , perMinute , clock = time.time ):
+        logging.Filter.__init__( self )
+        self.logger = logger
+        self.perMinute = perMinute
+        self.clock = clock
+        self.windowStart = clock()
+        self.count = 0
+        self.suppressed = 0
+        self.reporting = False
+
+    def filter( self , record ):
+        if self.reporting or ( self.perMinute <= 0 ):
+            return True
+        if record.levelno < getattr( logging , LOG_LEVEL , logging.INFO ):
+            # Below the configured level: the handlers drop it anyway, it
+            # mustn't use up the budget.
+            return True
+        if ( record.levelno >= logging.ERROR ) or str( record.msg ).startswith( "SECURITY" ):
+            return True
+        now = self.clock()
+        if now - self.windowStart >= 60:
+            suppressed = self.suppressed
+            self.windowStart = now
+            self.count = 0
+            self.suppressed = 0
+            if suppressed:
+                self.reporting = True
+                try:
+                    self.logger.warning( "%d log lines suppressed in the last minute (more than %d per minute)" , suppressed , self.perMinute )
+                finally:
+                    self.reporting = False
+        if self.count >= self.perMinute:
+            self.suppressed += 1
+            return False
+        self.count += 1
+        return True
+
 def findSocket( transport , maxDepth = 5 ):
     """ Returns the OS socket under a Twisted transport, unwrapping TLS
     (TLSMemoryBIOProtocol / BufferingTLSTransport) layers, or None. """
@@ -609,6 +651,9 @@ class HLServer( Factory ):
         self.log.setLevel( logging.DEBUG )
         # Don't propagate to the root logger — we attach our own handlers.
         self.log.propagate = False
+        for old in [ f for f in self.log.filters if isinstance( f , LogRateLimiter ) ]:
+            self.log.removeFilter( old )
+        self.log.addFilter( LogRateLimiter( self.log , LOG_LINES_PER_MINUTE ) )
 
         fmt = logging.Formatter( '%(asctime)s\t%(levelname)s\t%(message)s' )
 

@@ -61,6 +61,10 @@ try:
 except NameError:
     MIN_FREE_SPACE_MB = 1024
 try:
+    LOG_LINES_PER_MINUTE
+except NameError:
+    LOG_LINES_PER_MINUTE = 300
+try:
     MAX_CONNECTS_PER_MINUTE
 except NameError:
     MAX_CONNECTS_PER_MINUTE = 60

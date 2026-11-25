@@ -37,6 +37,11 @@ MAX_LOG_FILES = 5
 # LOG_FILE: DEBUG, INFO, WARNING, ERROR or CRITICAL. DEBUG includes hex
 # dumps of every packet, so only use it for troubleshooting.
 LOG_LEVEL = "INFO"
+# At most this many log lines per minute (errors and security warnings
+# are always kept); beyond it, lines are dropped and counted, so a flood
+# of connections can't grow the logs (and fill the disk) without limit.
+# 0 = unlimited.
+LOG_LINES_PER_MINUTE = 300
 
 ################################################################################
 # server configuration
