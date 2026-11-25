@@ -101,7 +101,15 @@ class AcctHandler( HLPacketHandler ):
         
         reply = HLPacket( HTLS_HDR_TASK , packet.seq )
         reply.addString( DATA_LOGIN , HLEncode( acct.login ) )
-        reply.addString( DATA_PASSWORD , HLEncode( acct.password ) )
+        # The stored hash only goes to readers who hold every privilege
+        # of the account (and so may edit it): an account manager must not
+        # get, say, the administrator's hash to crack offline. Others get
+        # a placeholder; they can't save that account anyway.
+        own = int( user.account.privs or 0 )
+        if int( acct.privs or 0 ) & ~own:
+            reply.addString( DATA_PASSWORD , HLEncode( "x" ) )
+        else:
+            reply.addString( DATA_PASSWORD , HLEncode( acct.password ) )
         reply.addString( DATA_NICK , acct.name )
         reply.addInt64( DATA_PRIVS , acct.privs )
         server.sendPacket( user.uid , reply )

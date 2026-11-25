@@ -1617,3 +1617,29 @@ def test_only_the_uploader_can_resume_a_partial_upload(irc_server, tmp_path):
     errors(attacker)
     attacker.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "tool.zip")])
     assert errors(attacker) == []
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 36: password hashes in account reads
+# ---------------------------------------------------------------------------
+
+
+def test_managers_do_not_get_more_privileged_hashes(fake_server):
+    from server.handlers.AcctHandler import AcctHandler
+    from shared.HLProtocol import (
+        DATA_LOGIN, DATA_PASSWORD, HLDecode, HLEncode, HLPacket, HTLC_HDR_ACCOUNT_READ, PRIV_READ_USERS,
+    )
+    from tests.conftest import make_user
+
+    fake_server.database.accounts.append(make_account(login="admin", privs=0xFFFFFFFFFFFFFFFF, password="$p1$secrethash"))
+    fake_server.database.accounts.append(make_account(login="helper", privs=PRIV_READ_USERS, password="$p1$helperhash"))
+    manager = make_user(uid=7, account=make_account(login="manager", privs=PRIV_READ_USERS))
+
+    def read(login):
+        packet = HLPacket(HTLC_HDR_ACCOUNT_READ, 1)
+        packet.addString(DATA_LOGIN, HLEncode(login))
+        AcctHandler().handleAccountRead(fake_server, manager, packet)
+        return HLDecode(fake_server.sent[-1][1].getBinary(DATA_PASSWORD))
+
+    assert read("admin") == b"x"
+    assert read("helper") == b"$p1$helperhash"
