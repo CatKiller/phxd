@@ -212,6 +212,11 @@ class FileHandler( HLPacketHandler ):
         
         # All uploads in progress should have this extension.
         path += ".hpf"
+        # Two uploads of the same name would write into the same file
+        # (letting one user inject data into another's upload).
+        for xfer in server.fileserver.transfers.values():
+            if ( xfer.type == 1 ) and ( os.path.abspath( xfer.path ) == os.path.abspath( path ) ):
+                raise HLException("This file is already being uploaded.")
         
         xfer = server.fileserver.addUpload( user.uid , path )
         if size > 0:

@@ -994,3 +994,27 @@ def test_changed_admin_password_is_left_alone(irc_server):
     irc_server.database.accounts.append(admin)
     assert irc_server.server.secureDefaultAdmin() is None
     assert admin.password == "somethingelse"
+
+
+# ---------------------------------------------------------------------------
+# Audit pass 7: concurrent uploads of the same name
+# ---------------------------------------------------------------------------
+
+
+def test_same_name_cannot_be_uploaded_twice_at_once(irc_server, tmp_path):
+    from shared.HLProtocol import HTLC_HDR_FILE_PUT, PRIV_UPLOAD_ANYWHERE, PRIV_UPLOAD_FILES
+
+    root = tmp_path / "files"
+    root.mkdir(exist_ok=True)
+    for acct in irc_server.database.accounts:
+        acct.fileRoot = str(root)
+        acct.privs |= PRIV_UPLOAD_FILES | PRIV_UPLOAD_ANYWHERE
+    first = irc_server.hotline_client()
+    first.login("guest", "", "alice")
+    first.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "shared.bin")])
+    second = irc_server.hotline_client()
+    second.login("tester", "s3cret")
+    errors(second)
+    second.send_packet(HTLC_HDR_FILE_PUT, [(DATA_FILENAME, "shared.bin")])
+    assert errors(second) == ["This file is already being uploaded."]
+    assert len(irc_server.server.fileserver.transfers) == 1
